@@ -26,6 +26,13 @@ const (
 	tcpIdleTimeout = 60 * time.Second
 )
 
+type ErrTCPHeaderLength int
+
+func (length ErrTCPHeaderLength) Error() string {
+	return fmt.Sprintf("modbus: length in response header '%v' must not be zero or greater than '%v'",
+		length, tcpMaxLength-tcpHeaderSize+1)
+}
+
 // TCPClientHandler implements Packager and Transporter interface.
 type TCPClientHandler struct {
 	tcpPackager
@@ -161,12 +168,22 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 		// Read header first
 		if _, err = io.ReadFull(mb.conn, data[:tcpHeaderSize]); err == nil {
 			aduResponse, err = mb.processResponse(data[:])
-			if err == nil && mb.ProtocolRecoveryTimeout > 0 && recoveryDeadline.Sub(time.Now()) > 0 &&
-				verify(aduRequest, aduResponse) != nil {
-				continue
+			if err == nil {
+				err = verify(aduRequest, aduResponse)
+				if err == nil {
+					mb.logf("modbus: received % x\n", aduResponse)
+					return // everything is OK
+				}
 			}
-			mb.logf("modbus: received % x\n", aduResponse)
-			return
+			if _, ok := err.(ErrTCPHeaderLength); !ok {
+				if mb.ProtocolRecoveryTimeout > 0 && recoveryDeadline.Sub(time.Now()) > 0 {
+					continue // TCP header OK but modbus frame not
+				}
+				return // no time left, report error
+			}
+			if mb.LinkRecoveryTimeout == 0 || recoveryDeadline.Sub(time.Now()) < 0 {
+				return // TCP header not OK, but no time left, report error
+			}
 			// Read attempt failed
 		} else if (err != io.EOF && err != io.ErrUnexpectedEOF) ||
 			mb.LinkRecoveryTimeout == 0 || recoveryDeadline.Sub(time.Now()) < 0 {
@@ -189,12 +206,12 @@ func (mb *tcpTransporter) processResponse(data []byte) (aduResponse []byte, err 
 	length := int(binary.BigEndian.Uint16(data[4:]))
 	if length <= 0 {
 		mb.flush(data[:])
-		err = fmt.Errorf("modbus: length in response header '%v' must not be zero", length)
+		err = ErrTCPHeaderLength(length)
 		return
 	}
 	if length > (tcpMaxLength - (tcpHeaderSize - 1)) {
 		mb.flush(data[:])
-		err = fmt.Errorf("modbus: length in response header '%v' must not greater than '%v'", length, tcpMaxLength-tcpHeaderSize+1)
+		err = ErrTCPHeaderLength(length)
 		return
 	}
 	// Skip unit id
