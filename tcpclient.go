@@ -29,7 +29,7 @@ const (
 type ErrTCPHeaderLength int
 
 func (length ErrTCPHeaderLength) Error() string {
-	return fmt.Sprintf("modbus: length in response header '%v' must not be zero or greater than '%v'",
+	return fmt.Sprintf("modbus: length in response header '%d' must not be zero or greater than '%v'",
 		length, tcpMaxLength-tcpHeaderSize+1)
 }
 

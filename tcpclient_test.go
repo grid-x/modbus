@@ -88,6 +88,11 @@ func TestTCPTransporter(t *testing.T) {
 	}
 }
 
+func TestErrTCPHeaderLength_Error(t *testing.T) {
+	// should not explode
+	_ = ErrTCPHeaderLength(1000).Error()
+}
+
 func BenchmarkTCPEncoder(b *testing.B) {
 	encoder := tcpPackager{
 		SlaveId: 10,
