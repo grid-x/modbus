@@ -1,0 +1,6 @@
+hash: 01b74b4d683a766c0ede29362809b28f0ee456e34159892041d2a13be7f12bf5
+updated: 2018-03-01T10:52:50.092863106+01:00
+imports:
+- name: github.com/grid-x/serial
+  version: 98648473d6ff46626c0dc229345673cbc8d52e20
+testImports: []
