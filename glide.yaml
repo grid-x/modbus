@@ -1,0 +1,3 @@
+package: github.com/grid-x/modbus
+import:
+- package: github.com/grid-x/serial

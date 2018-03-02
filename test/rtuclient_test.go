@@ -9,7 +9,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/goburrow/modbus"
+	"github.com/grid-x/modbus"
 )
 
 const (
@@ -17,6 +17,7 @@ const (
 )
 
 func TestRTUClient(t *testing.T) {
+	t.Skip()
 	// Diagslave does not support broadcast id.
 	handler := modbus.NewRTUClientHandler(rtuDevice)
 	handler.SlaveId = 17
@@ -24,6 +25,7 @@ func TestRTUClient(t *testing.T) {
 }
 
 func TestRTUClientAdvancedUsage(t *testing.T) {
+	t.Skip()
 	handler := modbus.NewRTUClientHandler(rtuDevice)
 	handler.BaudRate = 19200
 	handler.DataBits = 8
