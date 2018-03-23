@@ -1,7 +1,6 @@
 GO_FILES := $(shell find . -type f -name "*.go")
 GO_BUILD := CGO_ENABLED=0 go build -ldflags "-w -s"
-#GO_TOOLS := gridx/golang-tools:master-839443d
-GO_TOOLS := gridx/golang-tools:1.8.7
+GO_TOOLS := gridx/modbus-tools:1.8.7
 DOCKER_RUN := docker run --rm -v $$PWD:/go/src/github.com/grid-x/modbus -w /go/src/github.com/grid-x/modbus
 GO_RUN := ${DOCKER_RUN} ${GO_TOOLS} bash -c
 
