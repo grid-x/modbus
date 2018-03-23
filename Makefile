@@ -16,11 +16,11 @@ test:
 
 .PHONY: lint
 lint:
-	golint -set_exit_status $(shell glide nv)
+	golint -set_exit_status
 
 .PHONY: build
 build:
-	go build $(shell glide nv)
+	go build
 
 ci_test:
 	${GO_RUN} "make test"

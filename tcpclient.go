@@ -26,6 +26,7 @@ const (
 	tcpIdleTimeout = 60 * time.Second
 )
 
+// ErrTCPHeaderLength informs about a wrong header length.
 type ErrTCPHeaderLength int
 
 func (length ErrTCPHeaderLength) Error() string {
@@ -57,9 +58,9 @@ func TCPClient(address string) Client {
 // tcpPackager implements Packager interface.
 type tcpPackager struct {
 	// For synchronization between messages of server & client
-	transactionId uint32
+	transactionID uint32
 	// Broadcast address is 0
-	SlaveId byte
+	SlaveID byte
 }
 
 // Encode adds modbus application protocol header:
@@ -73,15 +74,15 @@ func (mb *tcpPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	adu = make([]byte, tcpHeaderSize+1+len(pdu.Data))
 
 	// Transaction identifier
-	transactionId := atomic.AddUint32(&mb.transactionId, 1)
-	binary.BigEndian.PutUint16(adu, uint16(transactionId))
+	transactionID := atomic.AddUint32(&mb.transactionID, 1)
+	binary.BigEndian.PutUint16(adu, uint16(transactionID))
 	// Protocol identifier
 	binary.BigEndian.PutUint16(adu[2:], tcpProtocolIdentifier)
-	// Length = sizeof(SlaveId) + sizeof(FunctionCode) + Data
+	// Length = sizeof(SlaveID) + sizeof(FunctionCode) + Data
 	length := uint16(1 + 1 + len(pdu.Data))
 	binary.BigEndian.PutUint16(adu[4:], length)
 	// Unit identifier
-	adu[6] = mb.SlaveId
+	adu[6] = mb.SlaveID
 
 	// PDU
 	adu[tcpHeaderSize] = pdu.FunctionCode

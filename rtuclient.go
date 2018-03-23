@@ -41,7 +41,7 @@ func RTUClient(address string) Client {
 
 // rtuPackager implements Packager interface.
 type rtuPackager struct {
-	SlaveId byte
+	SlaveID byte
 }
 
 // Encode encodes PDU in a RTU frame:
@@ -57,7 +57,7 @@ func (mb *rtuPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	}
 	adu = make([]byte, length)
 
-	adu[0] = mb.SlaveId
+	adu[0] = mb.SlaveID
 	adu[1] = pdu.FunctionCode
 	copy(adu[2:], pdu.Data)
 

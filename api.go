@@ -4,6 +4,7 @@
 
 package modbus
 
+// Client declares the functionality of a Modbus client regardless of the underlying transport stream.
 type Client interface {
 	// Bit access
 

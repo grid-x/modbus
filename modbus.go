@@ -12,42 +12,60 @@ import (
 )
 
 const (
-	// Bit access
+	// FuncCodeReadDiscreteInputs for bit wise access
 	FuncCodeReadDiscreteInputs = 2
-	FuncCodeReadCoils          = 1
-	FuncCodeWriteSingleCoil    = 5
+	// FuncCodeReadCoils for bit wise access
+	FuncCodeReadCoils = 1
+	// FuncCodeWriteSingleCoil for bit wise access
+	FuncCodeWriteSingleCoil = 5
+	// FuncCodeWriteMultipleCoils for bit wise access
 	FuncCodeWriteMultipleCoils = 15
 
-	// 16-bit access
-	FuncCodeReadInputRegisters         = 4
-	FuncCodeReadHoldingRegisters       = 3
-	FuncCodeWriteSingleRegister        = 6
-	FuncCodeWriteMultipleRegisters     = 16
+	// FuncCodeReadInputRegisters 16-bit wise access
+	FuncCodeReadInputRegisters = 4
+	// FuncCodeReadHoldingRegisters 16-bit wise access
+	FuncCodeReadHoldingRegisters = 3
+	// FuncCodeWriteSingleRegister 16-bit wise access
+	FuncCodeWriteSingleRegister = 6
+	// FuncCodeWriteMultipleRegisters 16-bit wise access
+	FuncCodeWriteMultipleRegisters = 16
+	// FuncCodeReadWriteMultipleRegisters 16-bit wise access
 	FuncCodeReadWriteMultipleRegisters = 23
-	FuncCodeMaskWriteRegister          = 22
-	FuncCodeReadFIFOQueue              = 24
+	// FuncCodeMaskWriteRegister 16-bit wise access
+	FuncCodeMaskWriteRegister = 22
+	// FuncCodeReadFIFOQueue 16-bit wise access
+	FuncCodeReadFIFOQueue = 24
 )
 
 const (
-	ExceptionCodeIllegalFunction                    = 1
-	ExceptionCodeIllegalDataAddress                 = 2
-	ExceptionCodeIllegalDataValue                   = 3
-	ExceptionCodeServerDeviceFailure                = 4
-	ExceptionCodeAcknowledge                        = 5
-	ExceptionCodeServerDeviceBusy                   = 6
-	ExceptionCodeMemoryParityError                  = 8
-	ExceptionCodeGatewayPathUnavailable             = 10
+	// ExceptionCodeIllegalFunction error code
+	ExceptionCodeIllegalFunction = 1
+	// ExceptionCodeIllegalDataAddress error code
+	ExceptionCodeIllegalDataAddress = 2
+	// ExceptionCodeIllegalDataValue error code
+	ExceptionCodeIllegalDataValue = 3
+	// ExceptionCodeServerDeviceFailure error code
+	ExceptionCodeServerDeviceFailure = 4
+	// ExceptionCodeAcknowledge error code
+	ExceptionCodeAcknowledge = 5
+	// ExceptionCodeServerDeviceBusy error code
+	ExceptionCodeServerDeviceBusy = 6
+	// ExceptionCodeMemoryParityError error code
+	ExceptionCodeMemoryParityError = 8
+	// ExceptionCodeGatewayPathUnavailable error code
+	ExceptionCodeGatewayPathUnavailable = 10
+	// ExceptionCodeGatewayTargetDeviceFailedToRespond error code
 	ExceptionCodeGatewayTargetDeviceFailedToRespond = 11
 )
 
-// ModbusError implements error interface.
-type ModbusError struct {
+// Error implements error interface.
+type Error struct {
 	FunctionCode  byte
 	ExceptionCode byte
 }
 
 // Error converts known modbus exception code to error message.
-func (e *ModbusError) Error() string {
+func (e *Error) Error() string {
 	var name string
 	switch e.ExceptionCode {
 	case ExceptionCodeIllegalFunction:

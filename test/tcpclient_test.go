@@ -25,7 +25,7 @@ func TestTCPClient(t *testing.T) {
 func TestTCPClientAdvancedUsage(t *testing.T) {
 	handler := modbus.NewTCPClientHandler(tcpDevice)
 	handler.Timeout = 5 * time.Second
-	handler.SlaveId = 1
+	handler.SlaveID = 1
 	handler.Logger = log.New(os.Stdout, "tcp: ", log.LstdFlags)
 	handler.Connect()
 	defer handler.Close()
