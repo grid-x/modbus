@@ -486,7 +486,7 @@ func dataBlockSuffix(suffix []byte, value ...uint16) []byte {
 }
 
 func responseError(response *ProtocolDataUnit) error {
-	mbError := &ModbusError{FunctionCode: response.FunctionCode}
+	mbError := &Error{FunctionCode: response.FunctionCode}
 	if response.Data != nil && len(response.Data) > 0 {
 		mbError.ExceptionCode = response.Data[0]
 	}
