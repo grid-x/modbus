@@ -64,8 +64,8 @@ type tcpPackager struct {
 }
 
 // SetSlave sets modbus slave id for the next client operations
-func (mb *tcpPackager) SetSlave(slaveId byte) {
-	mb.SlaveId = slaveId
+func (mb *tcpPackager) SetSlave(slaveID byte) {
+	mb.SlaveID = slaveID
 }
 
 // Encode adds modbus application protocol header:
