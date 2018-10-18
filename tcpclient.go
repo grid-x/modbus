@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -133,7 +132,7 @@ type tcpTransporter struct {
 	// Recovery timeout if the protocol is malformed, e.g. wrong transaction ID
 	ProtocolRecoveryTimeout time.Duration
 	// Transmission logger
-	Logger *log.Logger
+	Logger logger
 
 	// TCP connection
 	mu           sync.Mutex
