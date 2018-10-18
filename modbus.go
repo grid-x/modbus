@@ -100,7 +100,7 @@ type ProtocolDataUnit struct {
 
 // Packager specifies the communication layer.
 type Packager interface {
-	SetSlave(slaveId byte)
+	SetSlave(slaveID byte)
 	Encode(pdu *ProtocolDataUnit) (adu []byte, err error)
 	Decode(adu []byte) (pdu *ProtocolDataUnit, err error)
 	Verify(aduRequest []byte, aduResponse []byte) (err error)
@@ -111,6 +111,7 @@ type Transporter interface {
 	Send(aduRequest []byte) (aduResponse []byte, err error)
 }
 
+// Connector exposes the underlying handler capability for open/connect and close the transport channel.
 type Connector interface {
 	Connect() error
 	Close() error
