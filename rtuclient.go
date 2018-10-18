@@ -44,6 +44,11 @@ type rtuPackager struct {
 	SlaveID byte
 }
 
+// SetSlave sets modbus slave id for the next client operations
+func (mb *rtuPackager) SetSlave(slaveId byte) {
+	mb.SlaveId = slaveId
+}
+
 // Encode encodes PDU in a RTU frame:
 //  Slave Address   : 1 byte
 //  Function        : 1 byte
@@ -120,7 +125,7 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	mb.serialPort.startCloseTimer()
 
 	// Send the request
-	mb.serialPort.logf("modbus: sending %q\n", aduRequest)
+	mb.serialPort.logf("modbus: sending % x\n", aduRequest)
 	if _, err = mb.port.Write(aduRequest); err != nil {
 		return
 	}
