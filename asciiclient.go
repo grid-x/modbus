@@ -12,13 +12,15 @@ import (
 )
 
 const (
-	asciiStart   = ":"
 	asciiEnd     = "\r\n"
 	asciiMinSize = 3
 	asciiMaxSize = 513
 
 	hexTable = "0123456789ABCDEF"
 )
+
+// Modbus ASCII defines ':' but in the field often '>' is seen.
+var asciiStart = []string{":", ">"}
 
 // ASCIIClientHandler implements Packager and Transporter interface.
 type ASCIIClientHandler struct {
@@ -61,7 +63,7 @@ func (mb *asciiPackager) SetSlave(slaveID byte) {
 func (mb *asciiPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	var buf bytes.Buffer
 
-	if _, err = buf.WriteString(asciiStart); err != nil {
+	if _, err = buf.WriteString(asciiStart[0]); err != nil {
 		return
 	}
 	if err = writeHex(&buf, []byte{mb.SlaveID, pdu.FunctionCode}); err != nil {
@@ -98,8 +100,8 @@ func (mb *asciiPackager) Verify(aduRequest []byte, aduResponse []byte) (err erro
 		return
 	}
 	// First char must be a colon
-	str := string(aduResponse[0:len(asciiStart)])
-	if str != asciiStart {
+	str := string(aduResponse[0:len(asciiStart[0])])
+	if !isStartCharacter(str) {
 		err = fmt.Errorf("modbus: response frame '%v'... is not started with '%v'", str, asciiStart)
 		return
 	}
@@ -229,4 +231,14 @@ func readHex(data []byte) (value byte, err error) {
 	}
 	value = dst[0]
 	return
+}
+
+// isStartCharacter confirms that the given character is a Modbus ASCII start character.
+func isStartCharacter(str string) bool {
+	for i := range asciiStart {
+		if str == asciiStart[i] {
+			return true
+		}
+	}
+	return false
 }
