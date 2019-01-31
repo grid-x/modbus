@@ -46,6 +46,28 @@ func TestASCIIDecoding(t *testing.T) {
 	}
 }
 
+func TestASCIIDecodeStartCharacter(t *testing.T) {
+	decoder := asciiPackager{}
+	aduReq := []byte(":010300010002F9\r\n")
+	aduRespGreaterThan := []byte(">010304010F1509CA\r\n")
+	aduRespColon := []byte(":010304010F1509CA\r\n")
+	aduRespFail := []byte("!010304010F1509CA\r\n")
+
+	// Modbus ASCII conform.
+	if err := decoder.Verify(aduReq, aduRespColon); err != nil {
+		t.Fatal(err)
+	}
+
+	// Not Modbus ASCII conform but common in the field.
+	if err := decoder.Verify(aduReq, aduRespGreaterThan); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := decoder.Verify(aduReq, aduRespFail); err == nil {
+		t.Fatalf("expected '%s' to fail but does not", aduRespFail)
+	}
+}
+
 func BenchmarkASCIIEncoder(b *testing.B) {
 	encoder := asciiPackager{
 		SlaveID: 10,
