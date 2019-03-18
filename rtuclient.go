@@ -18,6 +18,30 @@ const (
 	rtuExceptionSize = 5
 )
 
+const (
+	stateSlaveID = 1 << iota
+	stateFunctionCode
+	stateReadLength
+	stateReadPayload
+	stateCRC
+)
+
+const (
+	readCoilsFunctionCode           = 0x01
+	readDiscreteInputsFunctionCode  = 0x02
+	readHoldingRegisterFunctionCode = 0x03
+	readInputRegisterFunctionCode   = 0x04
+
+	writeSingleCoilFunctionCode       = 0x05
+	writeSingleRegisterFunctionCode   = 0x06
+	writeMultipleRegisterFunctionCode = 0x10
+	writeMultipleCoilsFunctionCode    = 0x0F
+	maskWriteRegisterFunctionCode     = 0x16
+
+	readWriteMultipleRegisterFunctionCode = 0x17
+	readFifoQueueFunctionCode             = 0x18
+)
+
 // RTUClientHandler implements Packager and Transporter interface.
 type RTUClientHandler struct {
 	rtuPackager
@@ -115,6 +139,97 @@ type rtuSerialTransporter struct {
 	serialPort
 }
 
+// readIncrementally reads incrementally
+func readIncrementally(slaveID, functionCode byte, r io.Reader) ([]byte, error) {
+	n := 0
+	data := make([]byte, rtuMaxSize)
+
+	state := stateSlaveID
+	var length, toRead byte
+	crcCount := 0
+
+	for {
+		if r == nil {
+			return nil, fmt.Errorf("reader is nil")
+		}
+		buf := make([]byte, 1, 1)
+		_, err := io.ReadAtLeast(r, buf, 1)
+		if err != nil {
+			return nil, err
+		}
+		switch state {
+		// expecting slaveID
+		case stateSlaveID:
+			// read slaveID
+			if buf[0] == slaveID {
+				state = stateFunctionCode
+				data[n] = buf[0]
+				n++
+				continue
+			}
+		case stateFunctionCode:
+			// read function code
+			if buf[0] == functionCode {
+				switch functionCode {
+				case readDiscreteInputsFunctionCode,
+					readCoilsFunctionCode,
+					readHoldingRegisterFunctionCode,
+					readInputRegisterFunctionCode,
+					readWriteMultipleRegisterFunctionCode,
+					readFifoQueueFunctionCode:
+
+					state = stateReadLength
+				case writeSingleCoilFunctionCode,
+					writeSingleRegisterFunctionCode,
+					writeMultipleRegisterFunctionCode,
+					writeMultipleCoilsFunctionCode:
+
+					state = stateReadPayload
+					toRead = 4
+				case maskWriteRegisterFunctionCode:
+					state = stateReadPayload
+					toRead = 6
+				default:
+					return nil, fmt.Errorf("functioncode not handled: %d", functionCode)
+				}
+				data[n] = buf[0]
+				n++
+				continue
+			} else if buf[0] == functionCode+0x80 {
+				state = stateReadPayload
+				data[n] = buf[0]
+				n++
+				// only exception code left to read
+				toRead = 1
+			}
+		case stateReadLength:
+			// read length byte
+			length = buf[0]
+			toRead = length
+			data[n] = length
+			n++
+			state = stateReadPayload
+		case stateReadPayload:
+			// read payload
+			data[n] = buf[0]
+			toRead--
+			n++
+			if toRead == 0 {
+				state = stateCRC
+			}
+		case stateCRC:
+			// read crc
+			data[n] = buf[0]
+			crcCount++
+			n++
+			if crcCount == 2 {
+				return data[:n], nil
+			}
+		}
+	}
+
+}
+
 func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
 	// Make sure port is connected
 	if err = mb.serialPort.connect(); err != nil {
@@ -129,44 +244,16 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	if _, err = mb.port.Write(aduRequest); err != nil {
 		return
 	}
-	function := aduRequest[1]
-	functionFail := aduRequest[1] & 0x80
+	//function := aduRequest[1]
+	//functionFail := aduRequest[1] & 0x80
 	bytesToRead := calculateResponseLength(aduRequest)
 	time.Sleep(mb.calculateDelay(len(aduRequest) + bytesToRead))
 
-	var n int
-	var n1 int
-	var data [rtuMaxSize]byte
-	//We first read the minimum length and then read either the full package
-	//or the error package, depending on the error status (byte 2 of the response)
-	n, err = io.ReadAtLeast(mb.port, data[:], rtuMinSize)
-	if err != nil {
-		return
-	}
-	//if the function is correct
-	if data[1] == function {
-		//we read the rest of the bytes
-		if n < bytesToRead {
-			if bytesToRead > rtuMinSize && bytesToRead <= rtuMaxSize {
-				if bytesToRead > n {
-					n1, err = io.ReadFull(mb.port, data[n:bytesToRead])
-					n += n1
-				}
-			}
-		}
-	} else if data[1] == functionFail {
-		//for error we need to read 5 bytes
-		if n < rtuExceptionSize {
-			n1, err = io.ReadFull(mb.port, data[n:rtuExceptionSize])
-		}
-		n += n1
-	}
-
-	if err != nil {
-		return
-	}
-	aduResponse = data[:n]
-	mb.serialPort.logf("modbus: recv % x\n", aduResponse)
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
+	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.port)
+	mb.serialPort.logf("modbus: recv % x\n", data[:])
+	aduResponse = data
 	return
 }
 
