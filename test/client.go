@@ -139,15 +139,36 @@ func ClientTestReadFIFOQueue(t *testing.T, client modbus.Client) {
 }
 
 func ClientTestAll(t *testing.T, client modbus.Client) {
+	t.Logf("testing ReadCoils")
 	ClientTestReadCoils(t, client)
+
+	t.Logf("testing ReadDiscreteInputs")
 	ClientTestReadDiscreteInputs(t, client)
+
+	t.Logf("testing ReadHoldingRegisters")
 	ClientTestReadHoldingRegisters(t, client)
+
+	t.Logf("testing ReadInputRegisters")
 	ClientTestReadInputRegisters(t, client)
+
+	t.Logf("testing WriteSingleCoil")
 	ClientTestWriteSingleCoil(t, client)
+
+	t.Logf("testing WriteSingleRegister")
 	ClientTestWriteSingleRegister(t, client)
+
+	t.Logf("testing WriteMultipleCoils")
 	ClientTestWriteMultipleCoils(t, client)
+
+	t.Logf("testing WriteMultipleRegisters")
 	ClientTestWriteMultipleRegisters(t, client)
+
+	t.Logf("testing MaskWriteRegisters")
 	ClientTestMaskWriteRegisters(t, client)
+
+	t.Logf("testing ReadWriteMultipleRegisters")
 	ClientTestReadWriteMultipleRegisters(t, client)
+
+	t.Logf("testing ReadFifoQueue")
 	ClientTestReadFIFOQueue(t, client)
 }
