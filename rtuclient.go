@@ -140,7 +140,7 @@ type rtuSerialTransporter struct {
 }
 
 // readIncrementally reads incrementally
-func readIncrementally(slaveID, functionCode byte, r io.Reader) ([]byte, error) {
+func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Time) ([]byte, error) {
 	n := 0
 	data := make([]byte, rtuMaxSize)
 
@@ -149,6 +149,9 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader) ([]byte, error) 
 	crcCount := 0
 
 	for {
+		if time.Now().After(deadline) { // Possible that serialport may spew data
+			return nil, fmt.Errorf("failed to read from serial port within deadline")
+		}
 		if r == nil {
 			return nil, fmt.Errorf("reader is nil")
 		}
@@ -205,6 +208,11 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader) ([]byte, error) 
 		case stateReadLength:
 			// read length byte
 			length = buf[0]
+			// max length = rtuMaxSize - SlaveID(1) - FunctionCode(1) - length(1) - CRC(2)
+			if length >= rtuMaxSize-5 {
+				return nil, fmt.Errorf("invalid length received: %d", length)
+			}
+
 			toRead = length
 			data[n] = length
 			n++
@@ -251,7 +259,7 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
-	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.port)
+	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.port, time.Now().Add(mb.serialPort.Config.Timeout))
 	mb.serialPort.logf("modbus: recv % x\n", data[:])
 	aduResponse = data
 	return
