@@ -318,7 +318,7 @@ func Test_readIncrementally(t *testing.T) {
 			functionCode: 0x03,
 			data:         []byte{0x0F, 0x03, 0xFC, 0x01},
 			wantErr:      true,
-			expectedErr:  &invalidLengthError{length: 0xFC},
+			expectedErr:  &InvalidLengthError{length: 0xFC},
 		},
 		{
 			description:  "slave returns length of 0",
@@ -326,7 +326,7 @@ func Test_readIncrementally(t *testing.T) {
 			functionCode: 0x03,
 			data:         []byte{0x0F, 0x03, 0x00, 0x01},
 			wantErr:      true,
-			expectedErr:  &invalidLengthError{length: 0x00},
+			expectedErr:  &InvalidLengthError{length: 0x00},
 		},
 	}
 	for _, tc := range testcases {
