@@ -139,6 +139,17 @@ type rtuSerialTransporter struct {
 	serialPort
 }
 
+// InvalidLengthError is returned by readIncrementally when the modbus response would overflow buffer
+// implemented to simplify testing
+type InvalidLengthError struct {
+	length byte // length received which triggered the error
+}
+
+// Error implements the error interface
+func (e *InvalidLengthError) Error() string {
+	return fmt.Sprintf("invalid length received: %d", e.length)
+}
+
 // readIncrementally reads incrementally
 func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Time) ([]byte, error) {
 	n := 0
@@ -209,8 +220,8 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Ti
 			// read length byte
 			length = buf[0]
 			// max length = rtuMaxSize - SlaveID(1) - FunctionCode(1) - length(1) - CRC(2)
-			if length >= rtuMaxSize-5 {
-				return nil, fmt.Errorf("invalid length received: %d", length)
+			if length > rtuMaxSize-5 || length == 0 {
+				return nil, &InvalidLengthError{length: length}
 			}
 
 			toRead = length
