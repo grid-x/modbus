@@ -37,22 +37,23 @@ type rs485_ioctl_opts struct {
 }
 
 // New allocates and returns a new serial port controller.
-func New() Port {
+func newPort() *port {
 	return &port{fd: -1}
 }
 
 // Open connects to the given serial port.
-func (p *port) Open(c *Config) (err error) {
+func open(c *Config) (Port, error) {
+	p := newPort()
 	termios, err := newTermios(c)
 	if err != nil {
-		return
+		return nil, err
 	}
 	// See man termios(3).
 	// O_NOCTTY: no controlling terminal.
 	// O_NDELAY: no data carrier detect.
 	p.fd, err = syscall.Open(c.Address, syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_NDELAY|syscall.O_CLOEXEC, 0666)
 	if err != nil {
-		return
+		return nil, err
 	}
 	// Backup current termios to restore on closing.
 	p.backupTermios()
@@ -61,14 +62,14 @@ func (p *port) Open(c *Config) (err error) {
 		syscall.Close(p.fd)
 		p.fd = -1
 		p.oldTermios = nil
-		return err
+		return nil, err
 	}
 	if err = enableRS485(p.fd, &c.RS485); err != nil {
 		p.Close()
-		return err
+		return nil, err
 	}
 	p.timeout = c.Timeout
-	return
+	return p, nil
 }
 
 func (p *port) Close() (err error) {

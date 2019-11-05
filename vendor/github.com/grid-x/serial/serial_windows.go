@@ -13,30 +13,31 @@ type port struct {
 }
 
 // New allocates and returns a new serial port controller.
-func New() Port {
+func newPort() *port {
 	return &port{
 		handle: syscall.InvalidHandle,
 	}
 }
 
 // Open connects to the given serial port.
-func (p *port) Open(c *Config) (err error) {
-	p.handle, err = newHandle(c)
+func open(c *Config) (Port, error) {
+	p := newPort()
+	h, err := newHandle(c)
 	if err != nil {
-		return
+		return nil, err
 	}
+	p.handle = h
 	defer func() {
 		if err != nil {
 			syscall.CloseHandle(p.handle)
 			p.handle = syscall.InvalidHandle
 		}
 	}()
-	err = p.setSerialConfig(c)
-	if err != nil {
-		return
+
+	if err = p.setSerialConfig(c); err != nil {
+		return nil, err
 	}
-	err = p.setTimeouts(c)
-	return
+	return p, p.setTimeouts(c)
 }
 
 func (p *port) Close() (err error) {
@@ -86,7 +87,7 @@ func (p *port) setTimeouts(c *Config) error {
 	var timeouts c_COMMTIMEOUTS
 	// Read and write timeout
 	if c.Timeout > 0 {
-		timeout := toDWORD(int(c.Timeout.Nanoseconds() / 1E6))
+		timeout := toDWORD(int(c.Timeout.Nanoseconds() / 1e6))
 		// wait until a byte arrived or time out
 		timeouts.ReadIntervalTimeout = c_MAXDWORD
 		timeouts.ReadTotalTimeoutMultiplier = c_MAXDWORD
@@ -159,10 +160,10 @@ func newHandle(c *Config) (handle syscall.Handle, err error) {
 	handle, err = syscall.CreateFile(
 		syscall.StringToUTF16Ptr(c.Address),
 		syscall.GENERIC_READ|syscall.GENERIC_WRITE,
-		0,   // mode
-		nil, // security
+		0,                     // mode
+		nil,                   // security
 		syscall.OPEN_EXISTING, // create mode
-		0, // attributes
-		0) // templates
+		0,                     // attributes
+		0)                     // templates
 	return
 }

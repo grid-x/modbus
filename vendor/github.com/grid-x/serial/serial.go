@@ -50,15 +50,9 @@ type RS485Config struct {
 }
 
 // Port is the interface for controlling serial port.
-type Port interface {
-	io.ReadWriteCloser
-	// Connect connects to the serial port.
-	Open(*Config) error
-}
+type Port io.ReadWriteCloser
 
 // Open opens a serial port.
-func Open(c *Config) (p Port, err error) {
-	p = New()
-	err = p.Open(c)
-	return
+func Open(c *Config) (Port, error) {
+	return open(c)
 }
