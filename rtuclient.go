@@ -8,7 +8,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
 	"time"
+
+	"github.com/grid-x/serial"
 )
 
 const (
@@ -46,6 +49,15 @@ const (
 type RTUClientHandler struct {
 	rtuPackager
 	rtuSerialTransporter
+}
+
+// NewRTUClientHandlerWithPort uses the RTUClientHandler on top of the given port
+func NewRTUClientHandlerWithPort(p Port) *RTUClientHandler {
+	handler := &RTUClientHandler{}
+	handler.Port = p
+	handler.Timeout = serialTimeout
+	handler.IdleTimeout = serialIdleTimeout
+	return handler
 }
 
 // NewRTUClientHandler allocates and initializes a RTUClientHandler.
@@ -134,9 +146,16 @@ func (mb *rtuPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 	return
 }
 
+// Port represents a lockable serial port. It fits the io.ReadWriteCloser and
+// sync.Locker interface
+type Port interface {
+	serial.Port
+	sync.Locker
+}
+
 // rtuSerialTransporter implements Transporter interface.
 type rtuSerialTransporter struct {
-	serialPort
+	rtuActivityTracker
 }
 
 // InvalidLengthError is returned by readIncrementally when the modbus response would overflow buffer
@@ -250,17 +269,22 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Ti
 }
 
 func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
 	// Make sure port is connected
-	if err = mb.serialPort.connect(); err != nil {
+	if err = mb.connect(); err != nil {
 		return
 	}
 	// Start the timer to close when idle
-	mb.serialPort.lastActivity = time.Now()
-	mb.serialPort.startCloseTimer()
+	mb.lastActivity = time.Now()
+	mb.startCloseTimer()
+
+	mb.Port.Lock()
+	defer mb.Port.Unlock()
 
 	// Send the request
-	mb.serialPort.logf("modbus: send % x\n", aduRequest)
-	if _, err = mb.port.Write(aduRequest); err != nil {
+	mb.logf("modbus: send % x\n", aduRequest)
+	if _, err = mb.Port.Write(aduRequest); err != nil {
 		return
 	}
 	//function := aduRequest[1]
@@ -268,10 +292,8 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	bytesToRead := calculateResponseLength(aduRequest)
 	time.Sleep(mb.calculateDelay(len(aduRequest) + bytesToRead))
 
-	mb.mu.Lock()
-	defer mb.mu.Unlock()
-	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.port, time.Now().Add(mb.serialPort.Config.Timeout))
-	mb.serialPort.logf("modbus: recv % x\n", data[:])
+	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.Port, time.Now().Add(mb.Config.Timeout))
+	mb.logf("modbus: recv % x\n", data[:])
 	aduResponse = data
 	return
 }
