@@ -55,7 +55,7 @@ func (mb *asciiTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err 
 	}
 
 	// Send the request
-	mb.tcpTransporter.logf("modbus: sending %q\n", aduRequest)
+	mb.tcpTransporter.logf("modbus: send %q\n", aduRequest)
 	if _, err = mb.conn.Write(aduRequest); err != nil {
 		return
 	}
@@ -79,6 +79,6 @@ func (mb *asciiTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err 
 		}
 	}
 	aduResponse = data[:length]
-	mb.tcpTransporter.logf("modbus: received %q\n", aduResponse)
+	mb.tcpTransporter.logf("modbus: recv %q\n", aduResponse)
 	return
 }
