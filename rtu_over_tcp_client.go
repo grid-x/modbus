@@ -35,17 +35,18 @@ type rtuTCPTransporter struct {
 	tcpTransporter
 }
 
+// Send sends data to server and ensures adequate response for request type
 func (mb *rtuTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
-	mb.tcpTransporter.mu.Lock()
-	defer mb.tcpTransporter.mu.Unlock()
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
 
 	// Establish a new connection if not connected
-	if err = mb.tcpTransporter.connect(); err != nil {
+	if err = mb.connect(); err != nil {
 		return
 	}
 	// Set timer to close when idle
-	mb.tcpTransporter.lastActivity = time.Now()
-	mb.tcpTransporter.startCloseTimer()
+	mb.lastActivity = time.Now()
+	mb.startCloseTimer()
 	// Set write and read timeout
 	var timeout time.Time
 	if mb.Timeout > 0 {
@@ -56,7 +57,7 @@ func (mb *rtuTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err er
 	}
 
 	// Send the request
-	mb.tcpTransporter.logf("modbus: send % x\n", aduRequest)
+	mb.logf("modbus: send % x\n", aduRequest)
 	if _, err = mb.conn.Write(aduRequest); err != nil {
 		return
 	}
@@ -78,10 +79,8 @@ func (mb *rtuTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err er
 		//we read the rest of the bytes
 		if n < bytesToRead {
 			if bytesToRead > rtuMinSize && bytesToRead <= rtuMaxSize {
-				if bytesToRead > n {
-					n1, err = io.ReadFull(mb.conn, data[n:bytesToRead])
-					n += n1
-				}
+				n1, err = io.ReadFull(mb.conn, data[n:bytesToRead])
+				n += n1
 			}
 		}
 	} else if data[1] == functionFail {
