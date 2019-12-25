@@ -149,11 +149,12 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 	var data [tcpMaxLength]byte
 	recoveryDeadline := time.Now().Add(mb.IdleTimeout)
 
-	// Establish a new connection if not connected
-	if err = mb.connect(); err != nil {
-		return
-	}
 	for {
+		// Establish a new connection if not connected
+		if err = mb.connect(); err != nil {
+			return
+		}
+
 		// Set timer to close when idle
 		mb.lastActivity = time.Now()
 		mb.startCloseTimer()
@@ -198,11 +199,6 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 
 		mb.close()
 		time.Sleep(mb.LinkRecoveryTimeout)
-
-		// Establish a new connection if not connected
-		if err = mb.connect(); err != nil {
-			return
-		}
 	}
 }
 
