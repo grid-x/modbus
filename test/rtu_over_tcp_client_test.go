@@ -14,20 +14,20 @@ import (
 )
 
 const (
-	rtuOverTCPDevice = "localhost:5020"
+	rtuOverTCPDevice = "localhost:5021"
 )
 
 func TestRTUOverTCPClient(t *testing.T) {
 	// Diagslave does not support broadcast id.
 	handler := modbus.NewRTUOverTCPClientHandler(rtuOverTCPDevice)
-	handler.SlaveId = 17
+	handler.SlaveID = 17
 	ClientTestAll(t, modbus.NewClient(handler))
 }
 
 func TestRTUOverTCPClientAdvancedUsage(t *testing.T) {
 	handler := modbus.NewRTUOverTCPClientHandler(rtuOverTCPDevice)
 	handler.Timeout = 5 * time.Second
-	handler.SlaveId = 1
+	handler.SlaveID = 1
 	handler.Logger = log.New(os.Stdout, "rtu over tcp: ", log.LstdFlags)
 	handler.Connect()
 	defer handler.Close()
