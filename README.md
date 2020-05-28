@@ -44,7 +44,7 @@ Advanced usage:
 // Modbus TCP
 handler := modbus.NewTCPClientHandler("localhost:502")
 handler.Timeout = 10 * time.Second
-handler.SlaveId = 0xFF
+handler.SlaveID = 0xFF
 handler.Logger = log.New(os.Stdout, "test: ", log.LstdFlags)
 // Connect manually so that multiple requests are handled in one connection session
 err := handler.Connect()
@@ -63,7 +63,7 @@ handler.BaudRate = 115200
 handler.DataBits = 8
 handler.Parity = "N"
 handler.StopBits = 1
-handler.SlaveId = 1
+handler.SlaveID = 1
 handler.Timeout = 5 * time.Second
 
 err := handler.Connect()
