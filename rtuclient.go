@@ -250,6 +250,9 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Ti
 }
 
 func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
+
 	// Make sure port is connected
 	if err = mb.serialPort.connect(); err != nil {
 		return
@@ -268,8 +271,6 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	bytesToRead := calculateResponseLength(aduRequest)
 	time.Sleep(mb.calculateDelay(len(aduRequest) + bytesToRead))
 
-	mb.mu.Lock()
-	defer mb.mu.Unlock()
 	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.port, time.Now().Add(mb.serialPort.Config.Timeout))
 	mb.serialPort.logf("modbus: recv % x\n", data[:])
 	aduResponse = data
