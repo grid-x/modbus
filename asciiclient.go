@@ -164,24 +164,25 @@ func (mb *asciiPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 
 // asciiSerialTransporter implements Transporter interface.
 type asciiSerialTransporter struct {
-	serialPort
+	rtuActivityTracker
 }
 
 func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
-	mb.serialPort.mu.Lock()
-	defer mb.serialPort.mu.Unlock()
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
 
 	// Make sure port is connected
-	if err = mb.serialPort.connect(); err != nil {
+	if err = mb.connect(); err != nil {
 		return
 	}
+
 	// Start the timer to close when idle
-	mb.serialPort.lastActivity = time.Now()
-	mb.serialPort.startCloseTimer()
+	mb.lastActivity = time.Now()
+	mb.startCloseTimer()
 
 	// Send the request
-	mb.serialPort.logf("modbus: send % x\n", aduRequest)
-	if _, err = mb.port.Write(aduRequest); err != nil {
+	mb.logf("modbus: send % x\n", aduRequest)
+	if _, err = mb.Port.Write(aduRequest); err != nil {
 		return
 	}
 	// Get the response
@@ -189,7 +190,7 @@ func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, e
 	var data [asciiMaxSize]byte
 	length := 0
 	for {
-		if n, err = mb.port.Read(data[length:]); err != nil {
+		if n, err = mb.Port.Read(data[length:]); err != nil {
 			return
 		}
 		length += n
@@ -204,7 +205,7 @@ func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, e
 		}
 	}
 	aduResponse = data[:length]
-	mb.serialPort.logf("modbus: recv % x\n", aduResponse)
+	mb.logf("modbus: recv % x\n", aduResponse)
 	return
 }
 
