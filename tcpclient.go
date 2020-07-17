@@ -149,6 +149,21 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 	var data [tcpMaxLength]byte
 	recoveryDeadline := time.Now().Add(mb.IdleTimeout)
 
+	// recover link if deadline permits by closing connection
+	recoverLink := func(err error) bool {
+		res := mb.LinkRecoveryTimeout > 0 &&
+			time.Since(recoveryDeadline) < 0 &&
+			(err == io.EOF || err == io.ErrUnexpectedEOF)
+
+		if res {
+			mb.logf("modbus: close connection and retry, because of %v", err)
+			mb.close()
+			time.Sleep(mb.LinkRecoveryTimeout)
+		}
+
+		return res
+	}
+
 	for {
 		// Establish a new connection if not connected
 		if err = mb.connect(); err != nil {
@@ -158,22 +173,28 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 		// Set timer to close when idle
 		mb.lastActivity = time.Now()
 		mb.startCloseTimer()
+
 		// Set write and read timeout
-		var timeout time.Time
 		if mb.Timeout > 0 {
-			timeout = mb.lastActivity.Add(mb.Timeout)
+			timeout := mb.lastActivity.Add(mb.Timeout)
+			if err = mb.conn.SetDeadline(timeout); err != nil {
+				return
+			}
 		}
-		if err = mb.conn.SetDeadline(timeout); err != nil {
-			return
-		}
+
 		// Send data
 		mb.logf("modbus: send % x", aduRequest)
 		if _, err = mb.conn.Write(aduRequest); err != nil {
+			if recoverLink(err) {
+				continue
+			}
 			return
 		}
+
 		// Read header first
 		if _, err = io.ReadFull(mb.conn, data[:tcpHeaderSize]); err == nil {
 			aduResponse, err = mb.processResponse(data[:])
+
 			if err == nil {
 				err = verify(aduRequest, aduResponse)
 				if err == nil {
@@ -181,24 +202,19 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 					return // everything is OK
 				}
 			}
+
 			if _, ok := err.(ErrTCPHeaderLength); !ok {
-				if mb.ProtocolRecoveryTimeout > 0 && recoveryDeadline.Sub(time.Now()) > 0 {
+				if mb.ProtocolRecoveryTimeout > 0 && time.Since(recoveryDeadline) < 0 {
 					continue // TCP header OK but modbus frame not
 				}
 				return // no time left, report error
 			}
-			if mb.LinkRecoveryTimeout == 0 || recoveryDeadline.Sub(time.Now()) < 0 {
-				return // TCP header not OK, but no time left, report error
-			}
-			// Read attempt failed
-		} else if (err != io.EOF && err != io.ErrUnexpectedEOF) ||
-			mb.LinkRecoveryTimeout == 0 || recoveryDeadline.Sub(time.Now()) < 0 {
+		}
+
+		// attempt failed
+		if !recoverLink(err) {
 			return
 		}
-		mb.logf("modbus: close connection and retry, because of %v", err)
-
-		mb.close()
-		time.Sleep(mb.LinkRecoveryTimeout)
 	}
 }
 
@@ -326,8 +342,7 @@ func (mb *tcpTransporter) closeIdle() {
 	if mb.IdleTimeout <= 0 {
 		return
 	}
-	idle := time.Now().Sub(mb.lastActivity)
-	if idle >= mb.IdleTimeout {
+	if idle := time.Since(mb.lastActivity); idle >= mb.IdleTimeout {
 		mb.logf("modbus: closing connection due to idle timeout: %v", idle)
 		mb.close()
 	}
