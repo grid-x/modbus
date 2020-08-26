@@ -54,6 +54,7 @@ func NewRTUClientHandler(address string) *RTUClientHandler {
 	handler.Address = address
 	handler.Timeout = serialTimeout
 	handler.IdleTimeout = serialIdleTimeout
+	handler.serialPort.Logger = handler // expose the logger
 	return handler
 }
 
@@ -137,6 +138,13 @@ func (mb *rtuPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 // rtuSerialTransporter implements Transporter interface.
 type rtuSerialTransporter struct {
 	serialPort
+	Logger logger
+}
+
+func (mb *rtuSerialTransporter) Printf(format string, v ...interface{}) {
+	if mb.Logger != nil {
+		mb.Logger.Printf(format, v...)
+	}
 }
 
 // InvalidLengthError is returned by readIncrementally when the modbus response would overflow buffer
