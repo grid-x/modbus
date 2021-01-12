@@ -1,6 +1,16 @@
 hash: 01b74b4d683a766c0ede29362809b28f0ee456e34159892041d2a13be7f12bf5
-updated: 2019-11-04T14:37:32.999449696+01:00
+updated: 2020-12-23T09:25:12.486878+01:00
 imports:
 - name: github.com/grid-x/serial
   version: e24bc9bf6f0849262d7d6269f78ac6702cb071a2
-testImports: []
+testImports:
+- name: github.com/google/go-cmp
+  version: 2d0692c2e9617365a95b295612ac0d4415ba4627
+  subpackages:
+  - cmp
+  - cmp/internal/diff
+  - cmp/internal/flags
+  - cmp/internal/function
+  - cmp/internal/value
+- name: pgregory.net/rapid
+  version: 11c285bf68d87ce74f44151f8611d222a2eb823b
