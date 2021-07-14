@@ -132,6 +132,8 @@ func exec(
 	quantity int,
 ) (result []byte, err error) {
 	switch fnCode {
+	case 0x01:
+		result, err = client.ReadCoils(uint16(register), uint16(quantity))
 	case 0x06:
 		max := float64(math.MaxUint16)
 		if wval > max || wval < 0 {
