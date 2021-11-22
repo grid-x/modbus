@@ -134,6 +134,20 @@ func exec(
 	switch fnCode {
 	case 0x01:
 		result, err = client.ReadCoils(uint16(register), uint16(quantity))
+	case 0x05:
+		const (
+			coilOn  uint16 = 0xFF00
+			coilOff uint16 = 0x0000
+		)
+		v := uint16(wval)
+		if v != coilOn && v != coilOff {
+			err = fmt.Errorf(
+				"illegal: expect %X to request the output to be on or %X to be off, got: %X",
+				coilOn, coilOff, v,
+			)
+			return
+		}
+		result, err = client.WriteSingleCoil(uint16(register), v)
 	case 0x06:
 		max := float64(math.MaxUint16)
 		if wval > max || wval < 0 {
