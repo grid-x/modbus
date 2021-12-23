@@ -131,6 +131,8 @@ type tcpTransporter struct {
 	LinkRecoveryTimeout time.Duration
 	// Recovery timeout if the protocol is malformed, e.g. wrong transaction ID
 	ProtocolRecoveryTimeout time.Duration
+	// Silent period after successful connection
+	ConnectDelay time.Duration
 	// Transmission logger
 	Logger logger
 
@@ -273,6 +275,9 @@ func (mb *tcpTransporter) connect() error {
 			return err
 		}
 		mb.conn = conn
+
+		// silent period
+		time.Sleep(mb.ConnectDelay)
 	}
 	return nil
 }
