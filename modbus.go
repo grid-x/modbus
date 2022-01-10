@@ -89,7 +89,7 @@ func (e *Error) Error() string {
 	default:
 		name = "unknown"
 	}
-	return fmt.Sprintf("modbus: exception '%v' (%s), function '%v'", e.ExceptionCode, name, e.FunctionCode)
+	return fmt.Sprintf("modbus: exception '%v' (%s), function '%v'", e.ExceptionCode, name, e.FunctionCode&0x7F)
 }
 
 // ProtocolDataUnit (PDU) is independent of underlying communication layers.
