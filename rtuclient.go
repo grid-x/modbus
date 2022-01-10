@@ -174,7 +174,7 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Ti
 		if r == nil {
 			return nil, fmt.Errorf("reader is nil")
 		}
-		buf := make([]byte, 1, 1)
+		buf := make([]byte, 1)
 		_, err := io.ReadAtLeast(r, buf, 1)
 		if err != nil {
 			return nil, err

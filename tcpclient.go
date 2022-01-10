@@ -193,17 +193,17 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 				}
 			}
 			if _, ok := err.(ErrTCPHeaderLength); !ok {
-				if mb.ProtocolRecoveryTimeout > 0 && recoveryDeadline.Sub(time.Now()) > 0 {
+				if mb.ProtocolRecoveryTimeout > 0 && time.Until(recoveryDeadline) > 0 {
 					continue // TCP header OK but modbus frame not
 				}
 				return // no time left, report error
 			}
-			if mb.LinkRecoveryTimeout == 0 || recoveryDeadline.Sub(time.Now()) < 0 {
+			if mb.LinkRecoveryTimeout == 0 || time.Until(recoveryDeadline) < 0 {
 				return // TCP header not OK, but no time left, report error
 			}
 			// Read attempt failed
 		} else if (err != io.EOF && err != io.ErrUnexpectedEOF) ||
-			mb.LinkRecoveryTimeout == 0 || recoveryDeadline.Sub(time.Now()) < 0 {
+			mb.LinkRecoveryTimeout == 0 || time.Until(recoveryDeadline) < 0 {
 			return
 		}
 		mb.logf("modbus: close connection and retry, because of %v", err)
@@ -340,8 +340,8 @@ func (mb *tcpTransporter) closeIdle() {
 	if mb.IdleTimeout <= 0 {
 		return
 	}
-	idle := time.Now().Sub(mb.lastActivity)
-	if idle >= mb.IdleTimeout {
+
+	if idle := time.Since(mb.lastActivity); idle >= mb.IdleTimeout {
 		mb.logf("modbus: closing connection due to idle timeout: %v", idle)
 		mb.close()
 	}
