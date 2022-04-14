@@ -141,6 +141,9 @@ type tcpTransporter struct {
 	conn         net.Conn
 	closeTimer   *time.Timer
 	lastActivity time.Time
+
+	lastAttemptedTransactionID  uint16
+	lastSuccessfulTransactionID uint16
 }
 
 // helper value to signify what to do in Send
@@ -183,10 +186,14 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 			return
 		}
 
+		mb.lastAttemptedTransactionID = binary.BigEndian.Uint16(aduRequest)
 		var res readResult
 		aduResponse, res, err = mb.readResponse(aduRequest, data[:], recoveryDeadline)
 		switch res {
 		case readResultDone:
+			if err == nil {
+				mb.lastSuccessfulTransactionID = binary.BigEndian.Uint16(aduResponse)
+			}
 			return
 		case readResultRetry:
 			continue
@@ -222,7 +229,10 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 				return
 			case errTransactionIDMismatch:
 				if mb.ProtocolRecoveryTimeout > 0 && time.Until(recoveryDeadline) > 0 {
-					if v.got == v.expected-1 {
+					// the first condition check for a normal transaction id mismatch. The second part of the condition check for a wrap-around. If a wraparound is
+					// detected (last attempt is smaller than last success), the id can be higher than the last success or lower than the last attempt, but not both
+					if (v.got > mb.lastSuccessfulTransactionID && v.got < mb.lastAttemptedTransactionID) ||
+						(mb.lastAttemptedTransactionID < mb.lastSuccessfulTransactionID && (v.got > mb.lastSuccessfulTransactionID || v.got < mb.lastAttemptedTransactionID)) {
 						// most likely, we simply had a timeout for the earlier query and now read the (late) response. Ignore it
 						// and assume that the response will come *without* sending another query. (If we send another query
 						// with transactionId X+1 here, we would again get a transactionMismatchError if the response to
