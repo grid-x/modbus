@@ -110,7 +110,8 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		time.Sleep(1 * time.Second)
+		// ensure that answer is only written after second read attempt failed
+		time.Sleep(2500 * time.Millisecond)
 		packager := &tcpPackager{SlaveID: 0}
 		pdu := &ProtocolDataUnit{
 			FunctionCode: FuncCodeReadInputRegisters,
@@ -127,11 +128,21 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 			t.Error(err)
 			return
 		}
+		// encoding same PDU twice will increment the transaction id
+		data3, err := packager.Encode(pdu)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		if _, err := conn.Write(data1); err != nil {
 			t.Error(err)
 			return
 		}
 		if _, err := conn.Write(data2); err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := conn.Write(data3); err != nil {
 			t.Error(err)
 			return
 		}
@@ -144,6 +155,11 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 	client := NewClient(handler)
 	resp, err := client.ReadInputRegisters(0, 1)
 	opError, ok := err.(*net.OpError)
+	if !ok || !opError.Timeout() {
+		t.Fatalf("expected timeout error, got %q", err)
+	}
+	resp, err = client.ReadInputRegisters(0, 1)
+	opError, ok = err.(*net.OpError)
 	if !ok || !opError.Timeout() {
 		t.Fatalf("expected timeout error, got %q", err)
 	}
