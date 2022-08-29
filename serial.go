@@ -5,6 +5,7 @@
 package modbus
 
 import (
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -45,7 +46,7 @@ func (mb *serialPort) connect() error {
 	if mb.port == nil {
 		port, err := serial.Open(&mb.Config)
 		if err != nil {
-			return err
+			return fmt.Errorf("could not open %s: %w", mb.Config.Address, err)
 		}
 		mb.port = port
 	}
@@ -93,8 +94,8 @@ func (mb *serialPort) closeIdle() {
 	if mb.IdleTimeout <= 0 {
 		return
 	}
-	idle := time.Now().Sub(mb.lastActivity)
-	if idle >= mb.IdleTimeout {
+
+	if idle := time.Since(mb.lastActivity); idle >= mb.IdleTimeout {
 		mb.logf("modbus: closing connection due to idle timeout: %v", idle)
 		mb.close()
 	}
