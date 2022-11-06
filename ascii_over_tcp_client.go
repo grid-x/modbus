@@ -60,9 +60,8 @@ func (mb *asciiTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err 
 		return
 	}
 	// Get the response
-	var n int
+	var n, length int
 	var data [asciiMaxSize]byte
-	length := 0
 	for {
 		if n, err = mb.conn.Read(data[length:]); err != nil {
 			return
