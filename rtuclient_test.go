@@ -38,7 +38,7 @@ func TestRTUDecoding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if 16 != pdu.FunctionCode {
+	if pdu.FunctionCode != 16 {
 		t.Fatalf("Function code: expected %v, actual %v", 16, pdu.FunctionCode)
 	}
 	expected := []byte{0x8A, 0x00, 0x00, 0x03}
