@@ -193,9 +193,8 @@ func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, e
 		return
 	}
 	// Get the response
-	var n int
+	var n, length int
 	var data [asciiMaxSize]byte
-	length := 0
 	for {
 		if n, err = mb.port.Read(data[length:]); err != nil {
 			return

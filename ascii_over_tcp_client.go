@@ -35,16 +35,16 @@ type asciiTCPTransporter struct {
 }
 
 func (mb *asciiTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
-	mb.tcpTransporter.mu.Lock()
-	defer mb.tcpTransporter.mu.Unlock()
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
 
 	// Make sure port is connected
-	if err = mb.tcpTransporter.connect(); err != nil {
+	if err = mb.connect(); err != nil {
 		return
 	}
 	// Start the timer to close when idle
-	mb.tcpTransporter.lastActivity = time.Now()
-	mb.tcpTransporter.startCloseTimer()
+	mb.lastActivity = time.Now()
+	mb.startCloseTimer()
 	// Set write and read timeout
 	var timeout time.Time
 	if mb.Timeout > 0 {
@@ -55,14 +55,13 @@ func (mb *asciiTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err 
 	}
 
 	// Send the request
-	mb.tcpTransporter.logf("modbus: send %q\n", aduRequest)
+	mb.logf("modbus: send %q\n", aduRequest)
 	if _, err = mb.conn.Write(aduRequest); err != nil {
 		return
 	}
 	// Get the response
-	var n int
+	var n, length int
 	var data [asciiMaxSize]byte
-	length := 0
 	for {
 		if n, err = mb.conn.Read(data[length:]); err != nil {
 			return
@@ -79,6 +78,6 @@ func (mb *asciiTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err 
 		}
 	}
 	aduResponse = data[:length]
-	mb.tcpTransporter.logf("modbus: recv %q\n", aduResponse)
+	mb.logf("modbus: recv %q\n", aduResponse)
 	return
 }
