@@ -173,7 +173,7 @@ func exec(
 			buf = make([]byte, 8)
 			w.PutFloat64(buf, float64(wval))
 		}
-		result, err = client.WriteMultipleRegisters(uint16(register), uint16(len(buf)), buf)
+		result, err = client.WriteMultipleRegisters(uint16(register), uint16(len(buf))/2, buf)
 	case 0x04:
 		result, err = client.ReadInputRegisters(uint16(register), uint16(quantity))
 	case 0x03:
