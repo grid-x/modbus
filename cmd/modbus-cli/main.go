@@ -139,13 +139,9 @@ func exec(
 			coilOn  uint16 = 0xFF00
 			coilOff uint16 = 0x0000
 		)
-		v := uint16(wval)
-		if v != coilOn && v != coilOff {
-			err = fmt.Errorf(
-				"illegal: expect %X to request the output to be on or %X to be off, got: %X",
-				coilOn, coilOff, v,
-			)
-			return
+		v := coilOff
+		if wval > 0 {
+			v = coilOn
 		}
 		result, err = client.WriteSingleCoil(uint16(register), v)
 	case 0x06:
