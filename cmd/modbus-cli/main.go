@@ -46,7 +46,7 @@ func main() {
 		quantity       = flag.Int("quantity", 2, "register quantity, length in bytes")
 		ignoreCRCError = flag.Bool("ignore-crc", false, "ignore crc")
 		eType          = flag.String("type-exec", "uint16", "")
-		pType          = flag.String("type-parse", "raw", "")
+		pType          = flag.String("type-parse", "raw", "type to parse the register result. Use 'raw' if you want to see the raw bits and bytes. Use 'all' if you want to decode the result to different commonly used formats.")
 		writeValue     = flag.Float64("write-value", math.MaxFloat64, "")
 		parseBigEndian = flag.Bool("order-parse-bigendian", true, "t: big, f: little")
 		execBigEndian  = flag.Bool("order-exec-bigendian", true, "t: big, f: little")
@@ -103,11 +103,15 @@ func main() {
 	}
 
 	var res string
-	if *pType == "raw" {
+	switch *pType {
+	case "raw":
 		res, err = resultToRawString(result, int(startReg))
-	} else {
+	case "all":
+		res, err = resultToAllString(result)
+	default:
 		res, err = resultToString(result, po, *pType)
 	}
+
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -205,6 +209,108 @@ func resultToRawString(r []byte, startReg int) (string, error) {
 		res += fmt.Sprintf("%d\t0x%X 0x%X\t %b %b\n", reg, r[i*2], r[i*2+1], r[i*2], r[i*2+1])
 	}
 	return res, nil
+}
+
+func resultToAllString(result []byte) (string, error) {
+	switch len(result) {
+	case 2:
+		bigUint16, err := resultToString(result, binary.BigEndian, "uint16")
+		if err != nil {
+			return "", err
+		}
+		bigInt16, err := resultToString(result, binary.BigEndian, "int16")
+		if err != nil {
+			return "", err
+		}
+		littleUint16, err := resultToString(result, binary.LittleEndian, "uint16")
+		if err != nil {
+			return "", err
+		}
+		littleInt16, err := resultToString(result, binary.LittleEndian, "int16")
+		if err != nil {
+			return "", err
+		}
+
+		return strings.Join([]string{
+			fmt.Sprintf("INT16  - Big Endian (AB):    %s", bigInt16),
+			fmt.Sprintf("INT16  - Little Endian (BA): %s", littleInt16),
+			fmt.Sprintf("UINT16 - Big Endian (AB):    %s", bigUint16),
+			fmt.Sprintf("UINT16 - Little Endian (BA): %s", littleUint16),
+		}, "\n"), nil
+	case 4:
+		bigUint32, err := resultToString(result, binary.BigEndian, "uint32")
+		if err != nil {
+			return "", err
+		}
+		bigInt32, err := resultToString(result, binary.BigEndian, "int32")
+		if err != nil {
+			return "", err
+		}
+		bigFloat32, err := resultToString(result, binary.BigEndian, "float32")
+		if err != nil {
+			return "", err
+		}
+		littleUint32, err := resultToString(result, binary.LittleEndian, "uint32")
+		if err != nil {
+			return "", err
+		}
+		littleInt32, err := resultToString(result, binary.LittleEndian, "int32")
+		if err != nil {
+			return "", err
+		}
+		littleFloat32, err := resultToString(result, binary.LittleEndian, "float32")
+		if err != nil {
+			return "", err
+		}
+
+		// flip result
+		result := []byte{result[1], result[0], result[3], result[2]}
+
+		midBigUint32, err := resultToString(result, binary.BigEndian, "uint32")
+		if err != nil {
+			return "", err
+		}
+		midBigInt32, err := resultToString(result, binary.BigEndian, "int32")
+		if err != nil {
+			return "", err
+		}
+		midBigFloat32, err := resultToString(result, binary.BigEndian, "float32")
+		if err != nil {
+			return "", err
+		}
+		midLittleUint32, err := resultToString(result, binary.LittleEndian, "uint32")
+		if err != nil {
+			return "", err
+		}
+		midLittleInt32, err := resultToString(result, binary.LittleEndian, "int32")
+		if err != nil {
+			return "", err
+		}
+		midLittleFloat32, err := resultToString(result, binary.LittleEndian, "float32")
+		if err != nil {
+			return "", err
+		}
+
+		return strings.Join([]string{
+			fmt.Sprintf("INT32  - Big Endian (ABCD):    %s", bigInt32),
+			fmt.Sprintf("INT32  - Little Endian (DCBA): %s", littleInt32),
+			fmt.Sprintf("INT32  - Mid-Big Endian (BADC):    %s", midBigInt32),
+			fmt.Sprintf("INT32  - Mid-Little Endian (CDAB): %s", midLittleInt32),
+			"",
+			fmt.Sprintf("UINT32 - Big Endian (ABCD):    %s", bigUint32),
+			fmt.Sprintf("UINT32 - Little Endian (DCBA): %s", littleUint32),
+			fmt.Sprintf("UINT32 - Mid-Big Endian (BADC):    %s", midBigUint32),
+			fmt.Sprintf("UINT32 - Mid-Little Endian (CDAB): %s", midLittleUint32),
+			"",
+			fmt.Sprintf("Float32 - Big Endian (ABCD):    %s", bigFloat32),
+			fmt.Sprintf("Float32 - Little Endian (DCBA): %s", littleFloat32),
+			fmt.Sprintf("Float32 - Mid-Big Endian (BADC):    %s", midBigFloat32),
+			fmt.Sprintf("Float32 - Mid-Little Endian (CDAB): %s", midLittleFloat32),
+		}, "\n"), nil
+
+	default:
+		return "", fmt.Errorf("can't convert data with length %d", len(result))
+	}
 }
 
 func resultToString(r []byte, order binary.ByteOrder, varType string) (string, error) {
