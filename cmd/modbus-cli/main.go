@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/grid-x/modbus"
@@ -212,6 +213,9 @@ func resultToRawString(r []byte, startReg int) (string, error) {
 }
 
 func resultToAllString(result []byte) (string, error) {
+	buf := new(bytes.Buffer)
+	w := tabwriter.NewWriter(buf, 0, 0, 2, ' ', 0)
+
 	switch len(result) {
 	case 2:
 		bigUint16, err := resultToString(result, binary.BigEndian, "uint16")
@@ -231,12 +235,18 @@ func resultToAllString(result []byte) (string, error) {
 			return "", err
 		}
 
-		return strings.Join([]string{
-			fmt.Sprintf("INT16  - Big Endian (AB):    %s", bigInt16),
-			fmt.Sprintf("INT16  - Little Endian (BA): %s", littleInt16),
-			fmt.Sprintf("UINT16 - Big Endian (AB):    %s", bigUint16),
-			fmt.Sprintf("UINT16 - Little Endian (BA): %s", littleUint16),
-		}, "\n"), nil
+		fmt.Fprintf(w, "INT16\tBig Endian (AB):\t%s\t\n", bigInt16)
+		fmt.Fprintf(w, "INT16\tLittle Endian (BA):\t%s\t\n", littleInt16)
+		fmt.Fprintln(w, "\t")
+		fmt.Fprintf(w, "UINT16\tBig Endian (AB):\t%s\t\n", bigUint16)
+		fmt.Fprintf(w, "UINT16\tLittle Endian (BA):\t%s\t\n", littleUint16)
+
+		err = w.Flush()
+		if err != nil {
+			return "", err
+		}
+
+		return buf.String(), nil
 	case 4:
 		bigUint32, err := resultToString(result, binary.BigEndian, "uint32")
 		if err != nil {
@@ -291,23 +301,26 @@ func resultToAllString(result []byte) (string, error) {
 			return "", err
 		}
 
-		return strings.Join([]string{
-			fmt.Sprintf("INT32  - Big Endian (ABCD):    %s", bigInt32),
-			fmt.Sprintf("INT32  - Little Endian (DCBA): %s", littleInt32),
-			fmt.Sprintf("INT32  - Mid-Big Endian (BADC):    %s", midBigInt32),
-			fmt.Sprintf("INT32  - Mid-Little Endian (CDAB): %s", midLittleInt32),
-			"",
-			fmt.Sprintf("UINT32 - Big Endian (ABCD):    %s", bigUint32),
-			fmt.Sprintf("UINT32 - Little Endian (DCBA): %s", littleUint32),
-			fmt.Sprintf("UINT32 - Mid-Big Endian (BADC):    %s", midBigUint32),
-			fmt.Sprintf("UINT32 - Mid-Little Endian (CDAB): %s", midLittleUint32),
-			"",
-			fmt.Sprintf("Float32 - Big Endian (ABCD):    %s", bigFloat32),
-			fmt.Sprintf("Float32 - Little Endian (DCBA): %s", littleFloat32),
-			fmt.Sprintf("Float32 - Mid-Big Endian (BADC):    %s", midBigFloat32),
-			fmt.Sprintf("Float32 - Mid-Little Endian (CDAB): %s", midLittleFloat32),
-		}, "\n"), nil
+		fmt.Fprintf(w, "INT32\tBig Endian (ABCD):\t%s\t\n", bigInt32)
+		fmt.Fprintf(w, "INT32\tLittle Endian (DCBA):\t%s\t\n", littleInt32)
+		fmt.Fprintf(w, "INT32\tMid-Big Endian (BADC):\t%s\t\n", midBigInt32)
+		fmt.Fprintf(w, "INT32\tMid-Little Endian (CDAB):\t%s\t\n", midLittleInt32)
+		fmt.Fprintln(w, "\t")
+		fmt.Fprintf(w, "UINT32\tBig Endian (ABCD):\t%s\t\n", bigUint32)
+		fmt.Fprintf(w, "UINT32\tLittle Endian (DCBA):\t%s\t\n", littleUint32)
+		fmt.Fprintf(w, "UINT32\tMid-Big Endian (BADC):\t%s\t\n", midBigUint32)
+		fmt.Fprintf(w, "UINT32\tMid-Little Endian (CDAB):\t%s\t\n", midLittleUint32)
+		fmt.Fprintln(w, "\t")
+		fmt.Fprintf(w, "Float32\tBig Endian (ABCD):\t%s\t\n", bigFloat32)
+		fmt.Fprintf(w, "Float32\tLittle Endian (DCBA):\t%s\t\n", littleFloat32)
+		fmt.Fprintf(w, "Float32\tMid-Big Endian (BADC):\t%s\t\n", midBigFloat32)
+		fmt.Fprintf(w, "Float32\tMid-Little Endian (CDAB):\t%s\t\n", midLittleFloat32)
+		err = w.Flush()
+		if err != nil {
+			return "", err
+		}
 
+		return buf.String(), nil
 	default:
 		return "", fmt.Errorf("can't convert data with length %d", len(result))
 	}
