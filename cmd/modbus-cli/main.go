@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/grid-x/modbus"
@@ -46,7 +47,7 @@ func main() {
 		quantity       = flag.Int("quantity", 2, "register quantity, length in bytes")
 		ignoreCRCError = flag.Bool("ignore-crc", false, "ignore crc")
 		eType          = flag.String("type-exec", "uint16", "")
-		pType          = flag.String("type-parse", "raw", "")
+		pType          = flag.String("type-parse", "raw", "type to parse the register result. Use 'raw' if you want to see the raw bits and bytes. Use 'all' if you want to decode the result to different commonly used formats.")
 		writeValue     = flag.Float64("write-value", math.MaxFloat64, "")
 		parseBigEndian = flag.Bool("order-parse-bigendian", true, "t: big, f: little")
 		execBigEndian  = flag.Bool("order-exec-bigendian", true, "t: big, f: little")
@@ -103,11 +104,15 @@ func main() {
 	}
 
 	var res string
-	if *pType == "raw" {
+	switch *pType {
+	case "raw":
 		res, err = resultToRawString(result, int(startReg))
-	} else {
+	case "all":
+		res, err = resultToAllString(result)
+	default:
 		res, err = resultToString(result, po, *pType)
 	}
+
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -205,6 +210,120 @@ func resultToRawString(r []byte, startReg int) (string, error) {
 		res += fmt.Sprintf("%d\t0x%X 0x%X\t %b %b\n", reg, r[i*2], r[i*2+1], r[i*2], r[i*2+1])
 	}
 	return res, nil
+}
+
+func resultToAllString(result []byte) (string, error) {
+	buf := new(bytes.Buffer)
+	w := tabwriter.NewWriter(buf, 0, 0, 2, ' ', 0)
+
+	switch len(result) {
+	case 2:
+		bigUint16, err := resultToString(result, binary.BigEndian, "uint16")
+		if err != nil {
+			return "", err
+		}
+		bigInt16, err := resultToString(result, binary.BigEndian, "int16")
+		if err != nil {
+			return "", err
+		}
+		littleUint16, err := resultToString(result, binary.LittleEndian, "uint16")
+		if err != nil {
+			return "", err
+		}
+		littleInt16, err := resultToString(result, binary.LittleEndian, "int16")
+		if err != nil {
+			return "", err
+		}
+
+		fmt.Fprintf(w, "INT16\tBig Endian (AB):\t%s\t\n", bigInt16)
+		fmt.Fprintf(w, "INT16\tLittle Endian (BA):\t%s\t\n", littleInt16)
+		fmt.Fprintln(w, "\t")
+		fmt.Fprintf(w, "UINT16\tBig Endian (AB):\t%s\t\n", bigUint16)
+		fmt.Fprintf(w, "UINT16\tLittle Endian (BA):\t%s\t\n", littleUint16)
+
+		err = w.Flush()
+		if err != nil {
+			return "", err
+		}
+
+		return buf.String(), nil
+	case 4:
+		bigUint32, err := resultToString(result, binary.BigEndian, "uint32")
+		if err != nil {
+			return "", err
+		}
+		bigInt32, err := resultToString(result, binary.BigEndian, "int32")
+		if err != nil {
+			return "", err
+		}
+		bigFloat32, err := resultToString(result, binary.BigEndian, "float32")
+		if err != nil {
+			return "", err
+		}
+		littleUint32, err := resultToString(result, binary.LittleEndian, "uint32")
+		if err != nil {
+			return "", err
+		}
+		littleInt32, err := resultToString(result, binary.LittleEndian, "int32")
+		if err != nil {
+			return "", err
+		}
+		littleFloat32, err := resultToString(result, binary.LittleEndian, "float32")
+		if err != nil {
+			return "", err
+		}
+
+		// flip result
+		result := []byte{result[1], result[0], result[3], result[2]}
+
+		midBigUint32, err := resultToString(result, binary.BigEndian, "uint32")
+		if err != nil {
+			return "", err
+		}
+		midBigInt32, err := resultToString(result, binary.BigEndian, "int32")
+		if err != nil {
+			return "", err
+		}
+		midBigFloat32, err := resultToString(result, binary.BigEndian, "float32")
+		if err != nil {
+			return "", err
+		}
+		midLittleUint32, err := resultToString(result, binary.LittleEndian, "uint32")
+		if err != nil {
+			return "", err
+		}
+		midLittleInt32, err := resultToString(result, binary.LittleEndian, "int32")
+		if err != nil {
+			return "", err
+		}
+		midLittleFloat32, err := resultToString(result, binary.LittleEndian, "float32")
+		if err != nil {
+			return "", err
+		}
+
+		fmt.Fprintf(w, "INT32\tBig Endian (ABCD):\t%s\t\n", bigInt32)
+		fmt.Fprintf(w, "INT32\tLittle Endian (DCBA):\t%s\t\n", littleInt32)
+		fmt.Fprintf(w, "INT32\tMid-Big Endian (BADC):\t%s\t\n", midBigInt32)
+		fmt.Fprintf(w, "INT32\tMid-Little Endian (CDAB):\t%s\t\n", midLittleInt32)
+		fmt.Fprintln(w, "\t")
+		fmt.Fprintf(w, "UINT32\tBig Endian (ABCD):\t%s\t\n", bigUint32)
+		fmt.Fprintf(w, "UINT32\tLittle Endian (DCBA):\t%s\t\n", littleUint32)
+		fmt.Fprintf(w, "UINT32\tMid-Big Endian (BADC):\t%s\t\n", midBigUint32)
+		fmt.Fprintf(w, "UINT32\tMid-Little Endian (CDAB):\t%s\t\n", midLittleUint32)
+		fmt.Fprintln(w, "\t")
+		fmt.Fprintf(w, "Float32\tBig Endian (ABCD):\t%s\t\n", bigFloat32)
+		fmt.Fprintf(w, "Float32\tLittle Endian (DCBA):\t%s\t\n", littleFloat32)
+		fmt.Fprintf(w, "Float32\tMid-Big Endian (BADC):\t%s\t\n", midBigFloat32)
+		fmt.Fprintf(w, "Float32\tMid-Little Endian (CDAB):\t%s\t\n", midLittleFloat32)
+		err = w.Flush()
+		if err != nil {
+			return "", err
+		}
+
+		return buf.String(), nil
+	default:
+		return "", fmt.Errorf("can't convert data with length %d", len(result))
+	}
 }
 
 func resultToString(r []byte, order binary.ByteOrder, varType string) (string, error) {
