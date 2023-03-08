@@ -432,33 +432,44 @@ func newHandler(o option) (modbus.ClientHandler, error) {
 	return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 }
 
-type binaryWriter interface {
-	PutUint32(b []byte, v uint32)
-	PutUint16(b []byte, v uint16)
-	PutFloat32(b []byte, v float32)
-	PutFloat64(b []byte, v float64)
-}
-
 func newWriter(o binary.ByteOrder) *writer {
-	return &writer{o}
+	return &writer{order: o}
 }
 
 type writer struct {
-	binary.ByteOrder
+	order binary.ByteOrder
 }
 
-func (w *writer) PutFloat32(b []byte, v float32) {
-	buf := bytes.NewBuffer(b)
-	w.to(buf, v)
+func (w *writer) ToUint16(v uint16) []byte {
+	var buf bytes.Buffer
+	w.to(&buf, v)
+	b, _ := io.ReadAll(&buf)
+	return b
 }
 
-func (w *writer) PutFloat64(b []byte, v float64) {
-	buf := bytes.NewBuffer(b)
-	w.to(buf, v)
+func (w *writer) ToUint32(v uint32) []byte {
+	var buf bytes.Buffer
+	w.to(&buf, v)
+	b, _ := io.ReadAll(&buf)
+	return b
+}
+
+func (w *writer) ToFloat32(v float32) []byte {
+	var buf bytes.Buffer
+	w.to(&buf, v)
+	b, _ := io.ReadAll(&buf)
+	return b
+}
+
+func (w *writer) ToFloat64(v float64) []byte {
+	var buf bytes.Buffer
+	w.to(&buf, v)
+	b, _ := io.ReadAll(&buf)
+	return b
 }
 
 func (w *writer) to(buf io.Writer, f interface{}) {
-	if err := binary.Write(buf, w.ByteOrder, f); err != nil {
+	if err := binary.Write(buf, w.order, f); err != nil {
 		panic(fmt.Sprintf("binary.Write failed: %s", err.Error()))
 	}
 }
