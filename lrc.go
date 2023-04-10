@@ -9,14 +9,8 @@ type lrc struct {
 	sum uint8
 }
 
-func (lrc *lrc) pushByte(b byte) *lrc {
-	lrc.sum += b
-	return lrc
-}
-
-func (lrc *lrc) pushBytes(data []byte) *lrc {
-	var b byte
-	for _, b = range data {
+func (lrc *lrc) push(data ...byte) *lrc {
+	for _, b := range data {
 		lrc.sum += b
 	}
 	return lrc
