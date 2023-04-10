@@ -231,7 +231,7 @@ func writeHex(buf *bytes.Buffer, value []byte) (err error) {
 	return
 }
 
-// readHex decodes hexa string to byte, e.g. "8C" => 0x8C.
+// readHex decodes hex string to byte, e.g. "8C" => 0x8C.
 func readHex(data []byte) (value byte, err error) {
 	var dst [1]byte
 	if _, err = hex.Decode(dst[:], data[0:2]); err != nil {
