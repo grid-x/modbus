@@ -362,10 +362,9 @@ func (mb *tcpTransporter) flush(b []byte) error {
 	// Timeout setting will be reset when reading
 	if _, err := mb.conn.Read(b); err != nil {
 		// Ignore timeout error
-		if netError, ok := err.(net.Error); ok && netError.Timeout() {
-			return nil
+		if netError, ok := err.(net.Error); !(ok && netError.Timeout()) {
+			return err
 		}
-		return err
 	}
 	return nil
 }
