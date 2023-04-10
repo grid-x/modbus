@@ -188,14 +188,14 @@ func (mb *tcpTransporter) Send(aduRequest []byte) ([]byte, error) {
 		}
 
 		mb.lastAttemptedTransactionID = binary.BigEndian.Uint16(aduRequest)
-		var res readResult
 		aduResponse, res, err := mb.readResponse(aduRequest, data[:], recoveryDeadline)
 		switch res {
 		case readResultDone:
-			if err == nil {
-				mb.lastSuccessfulTransactionID = binary.BigEndian.Uint16(aduResponse)
+			if err != nil {
+				return nil, err
 			}
-			return nil, err
+			mb.lastSuccessfulTransactionID = binary.BigEndian.Uint16(aduResponse)
+			return aduResponse, nil
 		case readResultRetry:
 			continue
 		}
