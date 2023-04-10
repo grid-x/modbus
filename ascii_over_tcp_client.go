@@ -10,16 +10,16 @@ import (
 
 // ASCIIOverTCPClientHandler implements Packager and Transporter interface.
 type ASCIIOverTCPClientHandler struct {
-	asciiPackager
-	asciiTCPTransporter
+	ASCIIPackager
+	ASCIITCPTransporter
 }
 
 // NewASCIIOverTCPClientHandler allocates and initializes a ASCIIOverTCPClientHandler.
 func NewASCIIOverTCPClientHandler(address string) *ASCIIOverTCPClientHandler {
-	handler := &ASCIIOverTCPClientHandler{}
-	handler.Address = address
-	handler.Timeout = tcpTimeout
-	handler.IdleTimeout = tcpIdleTimeout
+	handler := &ASCIIOverTCPClientHandler{
+		ASCIIPackager:       ASCIIPackager{},
+		ASCIITCPTransporter: NewASCIITCPTransporter(address),
+	}
 	return handler
 }
 
@@ -29,12 +29,22 @@ func ASCIIOverTCPClient(address string) Client {
 	return NewClient(handler)
 }
 
-// asciiTCPTransporter implements Transporter interface.
-type asciiTCPTransporter struct {
-	tcpTransporter
+var _ Transporter = (*ASCIITCPTransporter)(nil)
+
+// ASCIITCPTransporter implements Transporter interface.
+type ASCIITCPTransporter struct {
+	TCPTransporter
 }
 
-func (mb *asciiTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+// NewASCIITCPTransporter creates ASCIITCPTransporter with default values
+func NewASCIITCPTransporter(address string) ASCIITCPTransporter {
+	return ASCIITCPTransporter{
+		TCPTransporter: NewTCPTransporter(address),
+	}
+}
+
+// Send sends data to server and ensures response has required length.
+func (mb *ASCIITCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 

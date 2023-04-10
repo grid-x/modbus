@@ -22,7 +22,7 @@ func TestSerialCloseIdle(t *testing.T) {
 	port := &nopCloser{
 		ReadWriter: &bytes.Buffer{},
 	}
-	s := serialPort{
+	s := SerialPort{
 		port:        port,
 		IdleTimeout: 100 * time.Millisecond,
 	}

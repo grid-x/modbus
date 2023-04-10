@@ -10,7 +10,7 @@ import (
 )
 
 func TestASCIIEncoding(t *testing.T) {
-	encoder := asciiPackager{}
+	encoder := ASCIIPackager{}
 	encoder.SlaveID = 17
 
 	pdu := ProtocolDataUnit{}
@@ -28,7 +28,7 @@ func TestASCIIEncoding(t *testing.T) {
 }
 
 func TestASCIIDecoding(t *testing.T) {
-	decoder := asciiPackager{}
+	decoder := ASCIIPackager{}
 	decoder.SlaveID = 247
 	adu := []byte(":F7031389000A60\r\n")
 
@@ -47,7 +47,7 @@ func TestASCIIDecoding(t *testing.T) {
 }
 
 func TestASCIIDecodeStartCharacter(t *testing.T) {
-	decoder := asciiPackager{}
+	decoder := ASCIIPackager{}
 	aduReq := []byte(":010300010002F9\r\n")
 	aduRespGreaterThan := []byte(">010304010F1509CA\r\n")
 	aduRespColon := []byte(":010304010F1509CA\r\n")
@@ -69,7 +69,7 @@ func TestASCIIDecodeStartCharacter(t *testing.T) {
 }
 
 func BenchmarkASCIIEncoder(b *testing.B) {
-	encoder := asciiPackager{
+	encoder := ASCIIPackager{
 		SlaveID: 10,
 	}
 	pdu := ProtocolDataUnit{
@@ -85,7 +85,7 @@ func BenchmarkASCIIEncoder(b *testing.B) {
 }
 
 func BenchmarkASCIIDecoder(b *testing.B) {
-	decoder := asciiPackager{
+	decoder := ASCIIPackager{
 		SlaveID: 10,
 	}
 	adu := []byte(":F7031389000A60\r\n")

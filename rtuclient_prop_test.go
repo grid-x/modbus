@@ -9,7 +9,7 @@ import (
 
 func TestRTUEncodeDecode(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		packager := &rtuPackager{
+		packager := &RtuPackager{
 			SlaveID: rapid.Byte().Draw(t, "SlaveID").(byte),
 		}
 

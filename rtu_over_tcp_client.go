@@ -11,16 +11,15 @@ import (
 
 // RTUOverTCPClientHandler implements Packager and Transporter interface.
 type RTUOverTCPClientHandler struct {
-	rtuPackager
-	rtuTCPTransporter
+	RtuPackager
+	RtuTCPTransporter
 }
 
 // NewRTUOverTCPClientHandler allocates and initializes a RTUOverTCPClientHandler.
 func NewRTUOverTCPClientHandler(address string) *RTUOverTCPClientHandler {
-	handler := &RTUOverTCPClientHandler{}
-	handler.Address = address
-	handler.Timeout = tcpTimeout
-	handler.IdleTimeout = tcpIdleTimeout
+	handler := &RTUOverTCPClientHandler{
+		RtuTCPTransporter: NewRTUTCPTransporter(address),
+	}
 	return handler
 }
 
@@ -30,13 +29,22 @@ func RTUOverTCPClient(address string) Client {
 	return NewClient(handler)
 }
 
-// rtuTCPTransporter implements Transporter interface.
-type rtuTCPTransporter struct {
-	tcpTransporter
+var _ Transporter = (*RtuTCPTransporter)(nil)
+
+// RtuTCPTransporter implements Transporter interface.
+type RtuTCPTransporter struct {
+	TCPTransporter
+}
+
+// NewRTUTCPTransporter creates RtuTCPTransporter with default values
+func NewRTUTCPTransporter(address string) RtuTCPTransporter {
+	return RtuTCPTransporter{
+		TCPTransporter: NewTCPTransporter(address),
+	}
 }
 
 // Send sends data to server and ensures adequate response for request type
-func (mb *rtuTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+func (mb *RtuTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 

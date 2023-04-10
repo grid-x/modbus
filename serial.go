@@ -19,8 +19,8 @@ const (
 	serialIdleTimeout = 60 * time.Second
 )
 
-// serialPort has configuration and I/O controller.
-type serialPort struct {
+// SerialPort has configuration and I/O controller.
+type SerialPort struct {
 	// Serial port configuration.
 	serial.Config
 
@@ -34,7 +34,19 @@ type serialPort struct {
 	closeTimer   *time.Timer
 }
 
-func (mb *serialPort) Connect() (err error) {
+// NewSerialPort creates a serial port with default configuration.
+func NewSerialPort(address string) *SerialPort {
+	return &SerialPort{
+		Config: serial.Config{
+			Address: address,
+			Timeout: serialTimeout,
+		},
+		IdleTimeout: serialIdleTimeout,
+	}
+}
+
+// Connect opens the port.
+func (mb *SerialPort) Connect() (err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
@@ -42,7 +54,7 @@ func (mb *serialPort) Connect() (err error) {
 }
 
 // connect connects to the serial port if it is not connected. Caller must hold the mutex.
-func (mb *serialPort) connect() error {
+func (mb *SerialPort) connect() error {
 	if mb.port == nil {
 		port, err := serial.Open(&mb.Config)
 		if err != nil {
@@ -53,7 +65,8 @@ func (mb *serialPort) connect() error {
 	return nil
 }
 
-func (mb *serialPort) Close() (err error) {
+// Close closes the port.
+func (mb *SerialPort) Close() (err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
@@ -61,7 +74,7 @@ func (mb *serialPort) Close() (err error) {
 }
 
 // close closes the serial port if it is connected. Caller must hold the mutex.
-func (mb *serialPort) close() (err error) {
+func (mb *SerialPort) close() (err error) {
 	if mb.port != nil {
 		err = mb.port.Close()
 		mb.port = nil
@@ -69,13 +82,13 @@ func (mb *serialPort) close() (err error) {
 	return
 }
 
-func (mb *serialPort) logf(format string, v ...interface{}) {
+func (mb *SerialPort) logf(format string, v ...interface{}) {
 	if mb.Logger != nil {
 		mb.Logger.Printf(format, v...)
 	}
 }
 
-func (mb *serialPort) startCloseTimer() {
+func (mb *SerialPort) startCloseTimer() {
 	if mb.IdleTimeout <= 0 {
 		return
 	}
@@ -87,7 +100,7 @@ func (mb *serialPort) startCloseTimer() {
 }
 
 // closeIdle closes the connection if last activity is passed behind IdleTimeout.
-func (mb *serialPort) closeIdle() {
+func (mb *SerialPort) closeIdle() {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 

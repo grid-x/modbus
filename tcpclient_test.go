@@ -13,7 +13,7 @@ import (
 )
 
 func TestTCPEncoding(t *testing.T) {
-	packager := tcpPackager{}
+	packager := TCPPackager{}
 	pdu := ProtocolDataUnit{}
 	pdu.FunctionCode = 3
 	pdu.Data = []byte{0, 4, 0, 3}
@@ -30,7 +30,7 @@ func TestTCPEncoding(t *testing.T) {
 }
 
 func TestTCPDecoding(t *testing.T) {
-	packager := tcpPackager{}
+	packager := TCPPackager{}
 	packager.transactionID = 1
 	packager.SlaveID = 17
 	adu := []byte{0, 1, 0, 0, 0, 6, 17, 3, 0, 120, 0, 3}
@@ -69,7 +69,7 @@ func TestTCPTransporter(t *testing.T) {
 			return
 		}
 	}()
-	client := &tcpTransporter{
+	client := &TCPTransporter{
 		Address:     ln.Addr().String(),
 		Timeout:     1 * time.Second,
 		IdleTimeout: 100 * time.Millisecond,
@@ -112,7 +112,7 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 		defer conn.Close()
 		// ensure that answer is only written after second read attempt failed
 		time.Sleep(2500 * time.Millisecond)
-		packager := &tcpPackager{SlaveID: 0}
+		packager := &TCPPackager{SlaveID: 0}
 		pdu := &ProtocolDataUnit{
 			FunctionCode: FuncCodeReadInputRegisters,
 			Data:         append([]byte{0x02}, data...),
@@ -173,7 +173,7 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 }
 
 func BenchmarkTCPEncoder(b *testing.B) {
-	encoder := tcpPackager{
+	encoder := TCPPackager{
 		SlaveID: 10,
 	}
 	pdu := ProtocolDataUnit{
@@ -189,7 +189,7 @@ func BenchmarkTCPEncoder(b *testing.B) {
 }
 
 func BenchmarkTCPDecoder(b *testing.B) {
-	decoder := tcpPackager{
+	decoder := TCPPackager{
 		SlaveID: 10,
 	}
 	adu := []byte{0, 1, 0, 0, 0, 6, 17, 3, 0, 120, 0, 3}

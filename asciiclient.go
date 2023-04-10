@@ -24,17 +24,16 @@ var asciiStart = []string{":", ">"}
 
 // ASCIIClientHandler implements Packager and Transporter interface.
 type ASCIIClientHandler struct {
-	asciiPackager
-	asciiSerialTransporter
+	ASCIIPackager
+	ASCIISerialTransporter
 }
 
 // NewASCIIClientHandler allocates and initializes a ASCIIClientHandler.
 func NewASCIIClientHandler(address string) *ASCIIClientHandler {
-	handler := &ASCIIClientHandler{}
-	handler.Address = address
-	handler.Timeout = serialTimeout
-	handler.IdleTimeout = serialIdleTimeout
-	handler.serialPort.Logger = handler // expose the logger
+	handler := &ASCIIClientHandler{
+		ASCIIPackager:          ASCIIPackager{},
+		ASCIISerialTransporter: NewASCIISerialTransporter(address),
+	}
 	return handler
 }
 
@@ -44,24 +43,25 @@ func ASCIIClient(address string) Client {
 	return NewClient(handler)
 }
 
-// asciiPackager implements Packager interface.
-type asciiPackager struct {
+// ASCIIPackager implements Packager interface.
+type ASCIIPackager struct {
 	SlaveID byte
 }
 
 // SetSlave sets modbus slave id for the next client operations
-func (mb *asciiPackager) SetSlave(slaveID byte) {
+func (mb *ASCIIPackager) SetSlave(slaveID byte) {
 	mb.SlaveID = slaveID
 }
 
 // Encode encodes PDU in a ASCII frame:
-//  Start           : 1 char
-//  Address         : 2 chars
-//  Function        : 2 chars
-//  Data            : 0 up to 2x252 chars
-//  LRC             : 2 chars
-//  End             : 2 chars
-func (mb *asciiPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
+//
+//	Start           : 1 char
+//	Address         : 2 chars
+//	Function        : 2 chars
+//	Data            : 0 up to 2x252 chars
+//	LRC             : 2 chars
+//	End             : 2 chars
+func (mb *ASCIIPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	var buf bytes.Buffer
 
 	if _, err = buf.WriteString(asciiStart[0]); err != nil {
@@ -88,7 +88,7 @@ func (mb *asciiPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 }
 
 // Verify verifies response length, frame boundary and slave id.
-func (mb *asciiPackager) Verify(aduRequest []byte, aduResponse []byte) (err error) {
+func (mb *ASCIIPackager) Verify(aduRequest []byte, aduResponse []byte) (err error) {
 	length := len(aduResponse)
 	// Minimum size (including address, function and LRC)
 	if length < asciiMinSize+6 {
@@ -129,7 +129,7 @@ func (mb *asciiPackager) Verify(aduRequest []byte, aduResponse []byte) (err erro
 }
 
 // Decode extracts PDU from ASCII frame and verify LRC.
-func (mb *asciiPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
+func (mb *ASCIIPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 	pdu = &ProtocolDataUnit{}
 	// Slave address
 	address, err := readHex(adu[1:])
@@ -163,32 +163,36 @@ func (mb *asciiPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 	return
 }
 
-// asciiSerialTransporter implements Transporter interface.
-type asciiSerialTransporter struct {
-	serialPort
+// ASCIISerialTransporter implements Transporter interface.
+type ASCIISerialTransporter struct {
+	SerialPort
 	Logger logger
 }
 
-func (mb *asciiSerialTransporter) Printf(format string, v ...interface{}) {
-	if mb.Logger != nil {
-		mb.Logger.Printf(format, v...)
+// NewASCIISerialTransporter creates ASCIISerialTransporter with default values
+func NewASCIISerialTransporter(address string) ASCIISerialTransporter {
+	t := ASCIISerialTransporter{
+		SerialPort: *NewSerialPort(address),
 	}
+	t.SerialPort.Logger = t.Logger
+	return t
 }
 
-func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
-	mb.serialPort.mu.Lock()
-	defer mb.serialPort.mu.Unlock()
+// Send sends data to serial device and ensures adequate response for request type
+func (mb *ASCIISerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+	mb.SerialPort.mu.Lock()
+	defer mb.SerialPort.mu.Unlock()
 
 	// Make sure port is connected
-	if err = mb.serialPort.connect(); err != nil {
+	if err = mb.SerialPort.connect(); err != nil {
 		return
 	}
 	// Start the timer to close when idle
-	mb.serialPort.lastActivity = time.Now()
-	mb.serialPort.startCloseTimer()
+	mb.SerialPort.lastActivity = time.Now()
+	mb.SerialPort.startCloseTimer()
 
 	// Send the request
-	mb.serialPort.logf("modbus: send % x\n", aduRequest)
+	mb.SerialPort.logf("modbus: send % x\n", aduRequest)
 	if _, err = mb.port.Write(aduRequest); err != nil {
 		return
 	}
@@ -211,7 +215,7 @@ func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, e
 		}
 	}
 	aduResponse = data[:length]
-	mb.serialPort.logf("modbus: recv % x\n", aduResponse)
+	mb.SerialPort.logf("modbus: recv % x\n", aduResponse)
 	return
 }
 

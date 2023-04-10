@@ -12,7 +12,7 @@ import (
 )
 
 func TestRTUEncoding(t *testing.T) {
-	encoder := rtuPackager{}
+	encoder := RtuPackager{}
 	encoder.SlaveID = 0x01
 
 	pdu := ProtocolDataUnit{}
@@ -30,7 +30,7 @@ func TestRTUEncoding(t *testing.T) {
 }
 
 func TestRTUDecoding(t *testing.T) {
-	decoder := rtuPackager{}
+	decoder := RtuPackager{}
 	adu := []byte{0x01, 0x10, 0x8A, 0x00, 0x00, 0x03, 0xAA, 0x10}
 
 	pdu, err := decoder.Decode(adu)
@@ -71,7 +71,7 @@ func TestCalculateResponseLength(t *testing.T) {
 }
 
 func BenchmarkRTUEncoder(b *testing.B) {
-	encoder := rtuPackager{
+	encoder := RtuPackager{
 		SlaveID: 10,
 	}
 	pdu := ProtocolDataUnit{
@@ -87,7 +87,7 @@ func BenchmarkRTUEncoder(b *testing.B) {
 }
 
 func BenchmarkRTUDecoder(b *testing.B) {
-	decoder := rtuPackager{
+	decoder := RtuPackager{
 		SlaveID: 10,
 	}
 	adu := []byte{0x01, 0x10, 0x8A, 0x00, 0x00, 0x03, 0xAA, 0x10}
