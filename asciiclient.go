@@ -55,77 +55,73 @@ func (mb *asciiPackager) SetSlave(slaveID byte) {
 }
 
 // Encode encodes PDU in a ASCII frame:
-//  Start           : 1 char
-//  Address         : 2 chars
-//  Function        : 2 chars
-//  Data            : 0 up to 2x252 chars
-//  LRC             : 2 chars
-//  End             : 2 chars
-func (mb *asciiPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
+//
+//	Start           : 1 char
+//	Address         : 2 chars
+//	Function        : 2 chars
+//	Data            : 0 up to 2x252 chars
+//	LRC             : 2 chars
+//	End             : 2 chars
+func (mb *asciiPackager) Encode(pdu *ProtocolDataUnit) ([]byte, error) {
 	var buf bytes.Buffer
 
-	if _, err = buf.WriteString(asciiStart[0]); err != nil {
-		return
+	if _, err := buf.WriteString(asciiStart[0]); err != nil {
+		return nil, err
 	}
-	if err = writeHex(&buf, []byte{mb.SlaveID, pdu.FunctionCode}); err != nil {
-		return
+	if err := writeHex(&buf, []byte{mb.SlaveID, pdu.FunctionCode}); err != nil {
+		return nil, err
 	}
-	if err = writeHex(&buf, pdu.Data); err != nil {
-		return
+	if err := writeHex(&buf, pdu.Data); err != nil {
+		return nil, err
 	}
+
 	// Exclude the beginning colon and terminating CRLF pair characters
 	var lrc lrc
-	lrc.reset()
 	lrc.pushByte(mb.SlaveID).pushByte(pdu.FunctionCode).pushBytes(pdu.Data)
-	if err = writeHex(&buf, []byte{lrc.value()}); err != nil {
-		return
+	if err := writeHex(&buf, []byte{lrc.value()}); err != nil {
+		return nil, err
 	}
-	if _, err = buf.WriteString(asciiEnd); err != nil {
-		return
+	if _, err := buf.WriteString(asciiEnd); err != nil {
+		return nil, err
 	}
-	adu = buf.Bytes()
-	return
+
+	return buf.Bytes(), nil
 }
 
 // Verify verifies response length, frame boundary and slave id.
-func (mb *asciiPackager) Verify(aduRequest []byte, aduResponse []byte) (err error) {
+func (mb *asciiPackager) Verify(aduRequest []byte, aduResponse []byte) error {
 	length := len(aduResponse)
 	// Minimum size (including address, function and LRC)
 	if length < asciiMinSize+6 {
-		err = fmt.Errorf("modbus: response length '%v' does not meet minimum '%v'", length, 9)
-		return
+		return fmt.Errorf("modbus: response length '%v' does not meet minimum '%v'", length, 9)
 	}
 	// Length excluding colon must be an even number
 	if length%2 != 1 {
-		err = fmt.Errorf("modbus: response length '%v' is not an even number", length-1)
-		return
+		return fmt.Errorf("modbus: response length '%v' is not an even number", length-1)
 	}
 	// First char must be a colon
 	str := string(aduResponse[0:len(asciiStart[0])])
 	if !isStartCharacter(str) {
-		err = fmt.Errorf("modbus: response frame '%v'... is not started with '%v'", str, asciiStart)
-		return
+		return fmt.Errorf("modbus: response frame '%v'... is not started with '%v'", str, asciiStart)
 	}
 	// 2 last chars must be \r\n
 	str = string(aduResponse[len(aduResponse)-len(asciiEnd):])
 	if str != asciiEnd {
-		err = fmt.Errorf("modbus: response frame ...'%v' is not ended with '%v'", str, asciiEnd)
-		return
+		return fmt.Errorf("modbus: response frame ...'%v' is not ended with '%v'", str, asciiEnd)
 	}
 	// Slave id
 	responseVal, err := readHex(aduResponse[1:])
 	if err != nil {
-		return
+		return err
 	}
 	requestVal, err := readHex(aduRequest[1:])
 	if err != nil {
-		return
+		return err
 	}
 	if responseVal != requestVal {
-		err = fmt.Errorf("modbus: response slave id '%v' does not match request '%v'", responseVal, requestVal)
-		return
+		return fmt.Errorf("modbus: response slave id '%v' does not match request '%v'", responseVal, requestVal)
 	}
-	return
+	return nil
 }
 
 // Decode extracts PDU from ASCII frame and verify LRC.
@@ -175,13 +171,13 @@ func (mb *asciiSerialTransporter) Printf(format string, v ...interface{}) {
 	}
 }
 
-func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+func (mb *asciiSerialTransporter) Send(aduRequest []byte) ([]byte, error) {
 	mb.serialPort.mu.Lock()
 	defer mb.serialPort.mu.Unlock()
 
 	// Make sure port is connected
-	if err = mb.serialPort.connect(); err != nil {
-		return
+	if err := mb.serialPort.connect(); err != nil {
+		return nil, err
 	}
 	// Start the timer to close when idle
 	mb.serialPort.lastActivity = time.Now()
@@ -189,15 +185,16 @@ func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, e
 
 	// Send the request
 	mb.serialPort.logf("modbus: send % x\n", aduRequest)
-	if _, err = mb.port.Write(aduRequest); err != nil {
-		return
+	if _, err := mb.port.Write(aduRequest); err != nil {
+		return nil, err
 	}
 	// Get the response
-	var n, length int
+	var length int
 	var data [asciiMaxSize]byte
 	for {
-		if n, err = mb.port.Read(data[length:]); err != nil {
-			return
+		n, err := mb.port.Read(data[length:])
+		if err != nil {
+			return nil, err
 		}
 		length += n
 		if length >= asciiMaxSize || n == 0 {
@@ -210,34 +207,33 @@ func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, e
 			}
 		}
 	}
-	aduResponse = data[:length]
-	mb.serialPort.logf("modbus: recv % x\n", aduResponse)
-	return
+
+	mb.serialPort.logf("modbus: recv % x\n", data[:length])
+	return data[:length], nil
 }
 
 // writeHex encodes byte to string in hexadecimal, e.g. 0xA5 => "A5"
 // (encoding/hex only supports lowercase string).
-func writeHex(buf *bytes.Buffer, value []byte) (err error) {
+func writeHex(buf *bytes.Buffer, value []byte) error {
 	var str [2]byte
 	for _, v := range value {
 		str[0] = hexTable[v>>4]
 		str[1] = hexTable[v&0x0F]
 
-		if _, err = buf.Write(str[:]); err != nil {
-			return
+		if _, err := buf.Write(str[:]); err != nil {
+			return err
 		}
 	}
-	return
+	return nil
 }
 
-// readHex decodes hexa string to byte, e.g. "8C" => 0x8C.
-func readHex(data []byte) (value byte, err error) {
+// readHex decodes hex string to byte, e.g. "8C" => 0x8C.
+func readHex(data []byte) (byte, error) {
 	var dst [1]byte
-	if _, err = hex.Decode(dst[:], data[0:2]); err != nil {
-		return
+	if _, err := hex.Decode(dst[:], data[0:2]); err != nil {
+		return 0, err
 	}
-	value = dst[0]
-	return
+	return dst[0], nil
 }
 
 // isStartCharacter confirms that the given character is a Modbus ASCII start character.

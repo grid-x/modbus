@@ -75,18 +75,18 @@ func (mb *rtuPackager) SetSlave(slaveID byte) {
 }
 
 // Encode encodes PDU in a RTU frame:
-//  Slave Address   : 1 byte
-//  Function        : 1 byte
-//  Data            : 0 up to 252 bytes
-//  CRC             : 2 byte
-func (mb *rtuPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
+//
+//	Slave Address   : 1 byte
+//	Function        : 1 byte
+//	Data            : 0 up to 252 bytes
+//	CRC             : 2 byte
+func (mb *rtuPackager) Encode(pdu *ProtocolDataUnit) ([]byte, error) {
 	length := len(pdu.Data) + 4
 	if length > rtuMaxSize {
-		err = fmt.Errorf("modbus: length of data '%v' must not be bigger than '%v'", length, rtuMaxSize)
-		return
+		return nil, fmt.Errorf("modbus: length of data '%v' must not be bigger than '%v'", length, rtuMaxSize)
 	}
-	adu = make([]byte, length)
 
+	adu := make([]byte, length)
 	adu[0] = mb.SlaveID
 	adu[1] = pdu.FunctionCode
 	copy(adu[2:], pdu.Data)
@@ -98,41 +98,40 @@ func (mb *rtuPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 
 	adu[length-1] = byte(checksum >> 8)
 	adu[length-2] = byte(checksum)
-	return
+
+	return adu, nil
 }
 
 // Verify verifies response length and slave id.
-func (mb *rtuPackager) Verify(aduRequest []byte, aduResponse []byte) (err error) {
+func (mb *rtuPackager) Verify(aduRequest []byte, aduResponse []byte) error {
 	length := len(aduResponse)
 	// Minimum size (including address, function and CRC)
 	if length < rtuMinSize {
-		err = fmt.Errorf("modbus: response length '%v' does not meet minimum '%v'", length, rtuMinSize)
-		return
+		return fmt.Errorf("modbus: response length '%v' does not meet minimum '%v'", length, rtuMinSize)
 	}
 	// Slave address must match
 	if aduResponse[0] != aduRequest[0] {
-		err = fmt.Errorf("modbus: response slave id '%v' does not match request '%v'", aduResponse[0], aduRequest[0])
-		return
+		return fmt.Errorf("modbus: response slave id '%v' does not match request '%v'", aduResponse[0], aduRequest[0])
 	}
-	return
+	return nil
 }
 
 // Decode extracts PDU from RTU frame and verify CRC.
-func (mb *rtuPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
+func (mb *rtuPackager) Decode(adu []byte) (*ProtocolDataUnit, error) {
 	length := len(adu)
 	// Calculate checksum
 	var crc crc
 	crc.reset().pushBytes(adu[0 : length-2])
 	checksum := uint16(adu[length-1])<<8 | uint16(adu[length-2])
 	if checksum != crc.value() {
-		err = fmt.Errorf("modbus: response crc '%v' does not match expected '%v'", checksum, crc.value())
-		return
+		return nil, fmt.Errorf("modbus: response crc '%v' does not match expected '%v'", checksum, crc.value())
 	}
 	// Function code & data
-	pdu = &ProtocolDataUnit{}
-	pdu.FunctionCode = adu[1]
-	pdu.Data = adu[2 : length-2]
-	return
+	pdu := &ProtocolDataUnit{
+		FunctionCode: adu[1],
+		Data:         adu[2 : length-2],
+	}
+	return pdu, nil
 }
 
 // rtuSerialTransporter implements Transporter interface.
@@ -257,13 +256,13 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Ti
 
 }
 
-func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+func (mb *rtuSerialTransporter) Send(aduRequest []byte) ([]byte, error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
 	// Make sure port is connected
-	if err = mb.serialPort.connect(); err != nil {
-		return
+	if err := mb.serialPort.connect(); err != nil {
+		return nil, err
 	}
 	// Start the timer to close when idle
 	mb.serialPort.lastActivity = time.Now()
@@ -271,8 +270,8 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 
 	// Send the request
 	mb.serialPort.logf("modbus: send % x\n", aduRequest)
-	if _, err = mb.port.Write(aduRequest); err != nil {
-		return
+	if _, err := mb.port.Write(aduRequest); err != nil {
+		return nil, err
 	}
 	//function := aduRequest[1]
 	//functionFail := aduRequest[1] & 0x80
@@ -280,9 +279,8 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	time.Sleep(mb.calculateDelay(len(aduRequest) + bytesToRead))
 
 	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.port, time.Now().Add(mb.serialPort.Config.Timeout))
-	mb.serialPort.logf("modbus: recv % x\n", data[:])
-	aduResponse = data
-	return
+	mb.serialPort.logf("modbus: recv % x\n", data)
+	return data, err
 }
 
 // calculateDelay roughly calculates time needed for the next frame.
