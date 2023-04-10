@@ -155,12 +155,11 @@ func (mb *asciiPackager) Decode(adu []byte) (*ProtocolDataUnit, error) {
 	if lrcVal != lrc.value() {
 		return nil, fmt.Errorf("modbus: response lrc '%v' does not match expected '%v'", lrcVal, lrc.value())
 	}
-
+	// Function code & data
 	pdu := &ProtocolDataUnit{
 		FunctionCode: functionCode,
 		Data:         data,
 	}
-
 	return pdu, nil
 }
 
