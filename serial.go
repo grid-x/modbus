@@ -34,7 +34,7 @@ type serialPort struct {
 	closeTimer   *time.Timer
 }
 
-func (mb *serialPort) Connect() (err error) {
+func (mb *serialPort) Connect() error {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
@@ -53,7 +53,7 @@ func (mb *serialPort) connect() error {
 	return nil
 }
 
-func (mb *serialPort) Close() (err error) {
+func (mb *serialPort) Close() error {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
@@ -61,12 +61,13 @@ func (mb *serialPort) Close() (err error) {
 }
 
 // close closes the serial port if it is connected. Caller must hold the mutex.
-func (mb *serialPort) close() (err error) {
+func (mb *serialPort) close() error {
 	if mb.port != nil {
-		err = mb.port.Close()
+		err := mb.port.Close()
 		mb.port = nil
+		return err
 	}
-	return
+	return nil
 }
 
 func (mb *serialPort) logf(format string, v ...interface{}) {
