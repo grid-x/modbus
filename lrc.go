@@ -9,11 +9,6 @@ type lrc struct {
 	sum uint8
 }
 
-func (lrc *lrc) reset() *lrc {
-	lrc.sum = 0
-	return lrc
-}
-
 func (lrc *lrc) pushByte(b byte) *lrc {
 	lrc.sum += b
 	return lrc

@@ -10,7 +10,7 @@ import (
 
 func TestLRC(t *testing.T) {
 	var lrc lrc
-	lrc.reset().pushByte(0x01).pushByte(0x03)
+	lrc.pushByte(0x01).pushByte(0x03)
 	lrc.pushBytes([]byte{0x01, 0x0A})
 
 	if 0xF1 != lrc.value() {

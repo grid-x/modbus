@@ -55,12 +55,13 @@ func (mb *asciiPackager) SetSlave(slaveID byte) {
 }
 
 // Encode encodes PDU in a ASCII frame:
-//  Start           : 1 char
-//  Address         : 2 chars
-//  Function        : 2 chars
-//  Data            : 0 up to 2x252 chars
-//  LRC             : 2 chars
-//  End             : 2 chars
+//
+//	Start           : 1 char
+//	Address         : 2 chars
+//	Function        : 2 chars
+//	Data            : 0 up to 2x252 chars
+//	LRC             : 2 chars
+//	End             : 2 chars
 func (mb *asciiPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	var buf bytes.Buffer
 
@@ -75,7 +76,6 @@ func (mb *asciiPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	}
 	// Exclude the beginning colon and terminating CRLF pair characters
 	var lrc lrc
-	lrc.reset()
 	lrc.pushByte(mb.SlaveID).pushByte(pdu.FunctionCode).pushBytes(pdu.Data)
 	if err = writeHex(&buf, []byte{lrc.value()}); err != nil {
 		return
@@ -154,7 +154,6 @@ func (mb *asciiPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 	}
 	// Calculate checksum
 	var lrc lrc
-	lrc.reset()
 	lrc.pushByte(address).pushByte(pdu.FunctionCode).pushBytes(pdu.Data)
 	if lrcVal != lrc.value() {
 		err = fmt.Errorf("modbus: response lrc '%v' does not match expected '%v'", lrcVal, lrc.value())
