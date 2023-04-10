@@ -166,7 +166,6 @@ func (mb *ASCIIPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 // ASCIISerialTransporter implements Transporter interface.
 type ASCIISerialTransporter struct {
 	SerialPort
-	Logger logger
 }
 
 // NewASCIISerialTransporter creates ASCIISerialTransporter with default values
@@ -174,8 +173,15 @@ func NewASCIISerialTransporter(address string) ASCIISerialTransporter {
 	t := ASCIISerialTransporter{
 		SerialPort: *NewSerialPort(address),
 	}
-	t.SerialPort.Logger = t.Logger
+	t.SerialPort.Logger = &t
 	return t
+}
+
+// Printf implements the Logger interface
+func (mb *ASCIISerialTransporter) Printf(format string, v ...interface{}) {
+	if mb.Logger != nil {
+		mb.Logger.Printf(format, v...)
+	}
 }
 
 // Send sends data to serial device and ensures adequate response for request type

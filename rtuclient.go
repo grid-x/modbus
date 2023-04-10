@@ -138,7 +138,6 @@ func (mb *RtuPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 // RtuSerialTransporter implements Transporter interface.
 type RtuSerialTransporter struct {
 	SerialPort
-	Logger logger
 }
 
 var _ Transporter = (*RtuSerialTransporter)(nil)
@@ -148,8 +147,15 @@ func NewRtuSerialTransporter(address string) RtuSerialTransporter {
 	t := RtuSerialTransporter{
 		SerialPort: *NewSerialPort(address),
 	}
-	t.SerialPort.Logger = t.Logger
+	t.SerialPort.Logger = &t
 	return t
+}
+
+// Printf implements the Logger interface
+func (mb *RtuSerialTransporter) Printf(format string, v ...interface{}) {
+	if mb.Logger != nil {
+		mb.Logger.Printf(format, v...)
+	}
 }
 
 // InvalidLengthError is returned by readIncrementally when the modbus response would overflow buffer
