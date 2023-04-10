@@ -34,7 +34,6 @@ func NewASCIIClientHandler(address string) *ASCIIClientHandler {
 	handler.Address = address
 	handler.Timeout = serialTimeout
 	handler.IdleTimeout = serialIdleTimeout
-	handler.serialPort.Logger = handler // expose the logger
 	return handler
 }
 
@@ -167,13 +166,6 @@ func (mb *asciiPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 // asciiSerialTransporter implements Transporter interface.
 type asciiSerialTransporter struct {
 	serialPort
-	Logger logger
-}
-
-func (mb *asciiSerialTransporter) Printf(format string, v ...interface{}) {
-	if mb.Logger != nil {
-		mb.Logger.Printf(format, v...)
-	}
 }
 
 func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
