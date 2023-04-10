@@ -125,38 +125,43 @@ func (mb *asciiPackager) Verify(aduRequest []byte, aduResponse []byte) error {
 }
 
 // Decode extracts PDU from ASCII frame and verify LRC.
-func (mb *asciiPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
-	pdu = &ProtocolDataUnit{}
+func (mb *asciiPackager) Decode(adu []byte) (*ProtocolDataUnit, error) {
 	// Slave address
 	address, err := readHex(adu[1:])
 	if err != nil {
-		return
+		return nil, err
 	}
 	// Function code
-	if pdu.FunctionCode, err = readHex(adu[3:]); err != nil {
-		return
+	functionCode, err := readHex(adu[3:])
+	if err != nil {
+		return nil, err
 	}
 	// Data
 	dataEnd := len(adu) - 4
-	data := adu[5:dataEnd]
-	pdu.Data = make([]byte, hex.DecodedLen(len(data)))
-	if _, err = hex.Decode(pdu.Data, data); err != nil {
-		return
+	aduData := adu[5:dataEnd]
+	data := make([]byte, hex.DecodedLen(len(aduData)))
+	if _, err = hex.Decode(data, aduData); err != nil {
+		return nil, err
 	}
 	// LRC
 	lrcVal, err := readHex(adu[dataEnd:])
 	if err != nil {
-		return
+		return nil, err
 	}
 	// Calculate checksum
 	var lrc lrc
 	lrc.reset()
-	lrc.pushByte(address).pushByte(pdu.FunctionCode).pushBytes(pdu.Data)
+	lrc.pushByte(address).pushByte(functionCode).pushBytes(data)
 	if lrcVal != lrc.value() {
-		err = fmt.Errorf("modbus: response lrc '%v' does not match expected '%v'", lrcVal, lrc.value())
-		return
+		return nil, fmt.Errorf("modbus: response lrc '%v' does not match expected '%v'", lrcVal, lrc.value())
 	}
-	return
+
+	pdu := &ProtocolDataUnit{
+		FunctionCode: functionCode,
+		Data:         data,
+	}
+
+	return pdu, nil
 }
 
 // asciiSerialTransporter implements Transporter interface.
