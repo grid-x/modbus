@@ -218,9 +218,15 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 					return // everything is OK
 				}
 			}
+
+			// no time left, report error
+			if time.Since(recoveryDeadline) >= 0 {
+				return
+			}
+
 			switch v := err.(type) {
 			case ErrTCPHeaderLength:
-				if mb.LinkRecoveryTimeout > 0 && time.Until(recoveryDeadline) > 0 {
+				if mb.LinkRecoveryTimeout > 0 {
 					// TCP header not OK - retry with another query
 					res = readResultRetry
 					return
@@ -228,7 +234,7 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 				// no time left, report error
 				return
 			case errTransactionIDMismatch:
-				if mb.ProtocolRecoveryTimeout > 0 && time.Until(recoveryDeadline) > 0 {
+				if mb.ProtocolRecoveryTimeout > 0 {
 					// the first condition check for a normal transaction id mismatch. The second part of the condition check for a wrap-around. If a wraparound is
 					// detected (last attempt is smaller than last success), the id can be higher than the last success or lower than the last attempt, but not both
 					if (v.got > mb.lastSuccessfulTransactionID && v.got < mb.lastAttemptedTransactionID) ||
@@ -245,7 +251,7 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 				}
 				return // no time left, report error
 			default:
-				if mb.ProtocolRecoveryTimeout > 0 && time.Until(recoveryDeadline) > 0 {
+				if mb.ProtocolRecoveryTimeout > 0 {
 					// TCP header OK but modbus frame not - retry with another query
 					res = readResultRetry
 					return
