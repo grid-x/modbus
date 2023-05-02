@@ -33,25 +33,33 @@ func (length ErrTCPHeaderLength) Error() string {
 		length, tcpMaxLength-tcpHeaderSize+1)
 }
 
-// TCPClientHandler implements Packager and Transporter interface.
-type TCPClientHandler struct {
-	tcpPackager
-	tcpTransporter
-}
-
-// NewTCPClientHandler allocates a new TCPClientHandler.
-func NewTCPClientHandler(address string) *TCPClientHandler {
-	h := &TCPClientHandler{}
-	h.Address = address
-	h.Timeout = tcpTimeout
-	h.IdleTimeout = tcpIdleTimeout
-	return h
-}
-
 // TCPClient creates TCP client with default handler and given connect string.
 func TCPClient(address string) Client {
 	handler := NewTCPClientHandler(address)
 	return NewClient(handler)
+}
+
+// TCPClientHandler implements Packager and Transporter interface.
+type TCPClientHandler struct {
+	tcpPackager
+	*tcpTransporter
+}
+
+// NewTCPClientHandler allocates a new TCPClientHandler.
+func NewTCPClientHandler(address string) *TCPClientHandler {
+	transport := defaultTCPTransporter(address)
+	h := &TCPClientHandler{
+		tcpTransporter: &transport,
+	}
+	return h
+}
+
+// Clone creates a new client handler with the same underlying shared transport.
+func (mb *TCPClientHandler) Clone() *TCPClientHandler {
+	h := &TCPClientHandler{
+		tcpTransporter: mb.tcpTransporter,
+	}
+	return h
 }
 
 // tcpPackager implements Packager interface.
@@ -146,6 +154,15 @@ type tcpTransporter struct {
 
 	lastAttemptedTransactionID  uint16
 	lastSuccessfulTransactionID uint16
+}
+
+// defaultTCPTransporter creates a new tcpTransporter with default values.
+func defaultTCPTransporter(address string) tcpTransporter {
+	return tcpTransporter{
+		Address:     address,
+		Timeout:     tcpTimeout,
+		IdleTimeout: tcpIdleTimeout,
+	}
 }
 
 // helper value to signify what to do in Send

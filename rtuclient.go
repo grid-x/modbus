@@ -42,26 +42,36 @@ const (
 	readFifoQueueFunctionCode             = 0x18
 )
 
-// RTUClientHandler implements Packager and Transporter interface.
-type RTUClientHandler struct {
-	rtuPackager
-	rtuSerialTransporter
-}
-
-// NewRTUClientHandler allocates and initializes a RTUClientHandler.
-func NewRTUClientHandler(address string) *RTUClientHandler {
-	handler := &RTUClientHandler{}
-	handler.Address = address
-	handler.Timeout = serialTimeout
-	handler.IdleTimeout = serialIdleTimeout
-	handler.serialPort.Logger = handler // expose the logger
-	return handler
-}
-
 // RTUClient creates RTU client with default handler and given connect string.
 func RTUClient(address string) Client {
 	handler := NewRTUClientHandler(address)
 	return NewClient(handler)
+}
+
+// RTUClientHandler implements Packager and Transporter interface.
+type RTUClientHandler struct {
+	rtuPackager
+	*rtuSerialTransporter
+}
+
+// NewRTUClientHandler allocates and initializes a RTUClientHandler.
+func NewRTUClientHandler(address string) *RTUClientHandler {
+	handler := &RTUClientHandler{
+		rtuSerialTransporter: &rtuSerialTransporter{
+			serialPort: defaultSerialPort(address),
+		},
+	}
+
+	handler.serialPort.Logger = handler // expose the logger
+	return handler
+}
+
+// Clone creates a new client handler with the same underlying shared transport.
+func (mb *RTUClientHandler) Clone() *RTUClientHandler {
+	h := &RTUClientHandler{
+		rtuSerialTransporter: mb.rtuSerialTransporter,
+	}
+	return h
 }
 
 // rtuPackager implements Packager interface.
