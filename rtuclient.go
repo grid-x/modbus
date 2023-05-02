@@ -74,11 +74,12 @@ func (mb *rtuPackager) SetSlave(slaveID byte) {
 	mb.SlaveID = slaveID
 }
 
-// Encode encodes PDU in a RTU frame:
-//  Slave Address   : 1 byte
-//  Function        : 1 byte
-//  Data            : 0 up to 252 bytes
-//  CRC             : 2 byte
+// Encode encodes PDU in an RTU frame:
+//
+//	Slave Address   : 1 byte
+//	Function        : 1 byte
+//	Data            : 0 up to 252 bytes
+//	CRC             : 2 byte
 func (mb *rtuPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	length := len(pdu.Data) + 4
 	if length > rtuMaxSize {
@@ -274,8 +275,8 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	if _, err = mb.port.Write(aduRequest); err != nil {
 		return
 	}
-	//function := aduRequest[1]
-	//functionFail := aduRequest[1] & 0x80
+	// function := aduRequest[1]
+	// functionFail := aduRequest[1] & 0x80
 	bytesToRead := calculateResponseLength(aduRequest)
 	time.Sleep(mb.calculateDelay(len(aduRequest) + bytesToRead))
 

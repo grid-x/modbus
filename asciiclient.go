@@ -54,13 +54,14 @@ func (mb *asciiPackager) SetSlave(slaveID byte) {
 	mb.SlaveID = slaveID
 }
 
-// Encode encodes PDU in a ASCII frame:
-//  Start           : 1 char
-//  Address         : 2 chars
-//  Function        : 2 chars
-//  Data            : 0 up to 2x252 chars
-//  LRC             : 2 chars
-//  End             : 2 chars
+// Encode encodes PDU in an ASCII frame:
+//
+//	Start           : 1 char
+//	Address         : 2 chars
+//	Function        : 2 chars
+//	Data            : 0 up to 2x252 chars
+//	LRC             : 2 chars
+//	End             : 2 chars
 func (mb *asciiPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	var buf bytes.Buffer
 
