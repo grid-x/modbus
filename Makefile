@@ -22,6 +22,9 @@ lint:
 build:
 	go build
 
+release:
+	goreleaser release --skip-publish --skip-validate --clean
+
 ci_test:
 	${GO_RUN} "make test"
 
@@ -30,3 +33,6 @@ ci_lint:
 
 ci_build:
 	${GO_RUN} "make build"
+
+ci_release:
+	${GO_RUN} "goreleaser release --skip-publish --skip-validate --rm-dist"
