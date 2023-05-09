@@ -411,3 +411,9 @@ func (mb *tcpTransporter) closeIdle() {
 		mb.close()
 	}
 }
+
+// ResetTimeouts applies default timeouts for the tcp connection
+func (mb *tcpTransporter) ResetTimeouts() {
+	mb.Timeout = tcpTimeout
+	mb.IdleTimeout = tcpIdleTimeout
+}

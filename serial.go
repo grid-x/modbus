@@ -100,3 +100,9 @@ func (mb *serialPort) closeIdle() {
 		mb.close()
 	}
 }
+
+// ResetTimeouts applies default timeouts for the serial connection
+func (mb *serialPort) ResetTimeouts() {
+	mb.Timeout = serialTimeout
+	mb.IdleTimeout = serialIdleTimeout
+}
