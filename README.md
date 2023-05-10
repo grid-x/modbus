@@ -1,31 +1,28 @@
-go modbus
-=========
+# go modbus
 Fault-tolerant, fail-fast implementation of Modbus protocol in Go.
 
-Supported functions
--------------------
+# Supported functions
+
 Bit access:
-*   Read Discrete Inputs
-*   Read Coils
-*   Write Single Coil
-*   Write Multiple Coils
+- Read Discrete Inputs
+- Read Coils
+- Write Single Coil
+- Write Multiple Coils
 
 16-bit access:
-*   Read Input Registers
-*   Read Holding Registers
-*   Write Single Register
-*   Write Multiple Registers
-*   Read/Write Multiple Registers
-*   Mask Write Register
-*   Read FIFO Queue
+- Read Input Registers
+- Read Holding Registers
+- Write Single Register
+- Write Multiple Registers
+- Read/Write Multiple Registers
+- Mask Write Register
+- Read FIFO Queue
 
-Supported formats
------------------
-*   TCP
-*   Serial (RTU, ASCII)
+# Supported formats
+- TCP
+- Serial (RTU, ASCII)
 
-Usage
------
+# Usage
 Basic usage:
 ```go
 // Modbus TCP
@@ -73,6 +70,67 @@ client := modbus.NewClient(handler)
 results, err := client.ReadDiscreteInputs(15, 2)
 ```
 
-References
-----------
--   [Modbus Specifications and Implementation Guides](http://www.modbus.org/specs.php)
+# Modbus-CLI
+
+We offer a CLI tool to read/write registers.
+
+## Usage
+
+For simplicity, the following examples are all using Modbus TCP.
+For Modbus RTU, replace the address field and use the `rtu-` arguments in order to use different baudrates, databits, etc.
+```sh
+./modbus-cli -address=rtu:///dev/ttyUSB0 -rtu-baudrate=57600 -rtu-stopbits=2 -rtu-parity=N -rtu-databits=8 ...
+```
+### Reading Registers
+
+Read 1 register and get raw result
+```sh
+./modbus-cli -address=tcp://127.0.0.1:502 -quantity=1 -type-parse=raw -register=42
+```
+
+Read 1 register and decode result as uint16
+```sh
+./modbus-cli -address=tcp://127.0.0.1:502 -quantity=1 -type-parse=uint16 -register=42
+```
+
+Read 1 register and get all possible decoded results
+```sh
+./modbus-cli -address=tcp://127.0.0.1:502 -quantity=1 -type-parse=all -register=42
+```
+
+Read 2 registers and decode result as uint32
+```sh
+./modbus-cli -address=tcp://127.0.0.1:502 -quantity=2 -type-parse=uint32 -register=42
+```
+
+Read 2 registers and get all possible decoded results
+```sh
+./modbus-cli -address=tcp://127.0.0.1:502 -quantity=2 -type-parse=all -register=42
+```
+
+Reading multiple registers is only possible in the raw format
+```sh
+./modbus-cli -address=tcp://127.0.0.1:502 -quantity=16 -type-parse=raw -register=42
+```
+
+### Writing Registers
+
+Write 1 register 
+```sh
+./modbus-cli -address=tcp://127.0.0.1:502 -fn-code=0x06 -type-exec=uint16 -register=42 -write-value=7
+```
+
+Write 2 registers
+```sh
+./modbus-cli -address=tcp://127.0.0.1:502 -fn-code=0x10 -type-exec=uint32 -register=42 -write-value=7
+```
+
+## Release
+
+To release the Modbus-CLI tool, run either `make release` if you have installed `goreleaser` or `make ci_release`.
+The generated files can be found in the directory in the `dist` directory.
+
+Take the `.tar.gz` and `.zip` files and create a new GitHub release.
+
+# References
+- [Modbus Specifications and Implementation Guides](http://www.modbus.org/specs.php)
