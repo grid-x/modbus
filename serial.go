@@ -34,6 +34,17 @@ type serialPort struct {
 	closeTimer   *time.Timer
 }
 
+// defaultSerialPort creates a serialPort with default configuration.
+func defaultSerialPort(address string) serialPort {
+	return serialPort{
+		Config: serial.Config{
+			Address: address,
+			Timeout: serialTimeout,
+		},
+		IdleTimeout: serialIdleTimeout,
+	}
+}
+
 func (mb *serialPort) Connect() (err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
