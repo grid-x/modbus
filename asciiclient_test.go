@@ -37,7 +37,7 @@ func TestASCIIDecoding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if 3 != pdu.FunctionCode {
+	if pdu.FunctionCode != 3 {
 		t.Fatalf("Function code: expected %v, actual %v", 15, pdu.FunctionCode)
 	}
 	expected := []byte{0x13, 0x89, 0, 0x0A}
