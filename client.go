@@ -503,6 +503,7 @@ func (mb *client) send(request *ProtocolDataUnit) (response *ProtocolDataUnit, e
 			break
 		}
 		if time.Now().After(maxTime) {
+			err = fmt.Errorf("modbus: response timeout")
 			return
 		}
 		// Else try again until timeout.
