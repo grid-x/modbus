@@ -69,9 +69,21 @@ func (mb *serialPort) close() (err error) {
 	return
 }
 
-func (mb *serialPort) logf(format string, v ...interface{}) {
+func (mb *serialPort) Debug(format string, v ...interface{}) {
 	if mb.Logger != nil {
-		mb.Logger.Printf(format, v...)
+		mb.Logger.Debug(format, v...)
+	}
+}
+
+func (mb *serialPort) Info(format string, v ...interface{}) {
+	if mb.Logger != nil {
+		mb.Logger.Info(format, v...)
+	}
+}
+
+func (mb *serialPort) Error(format string, v ...interface{}) {
+	if mb.Logger != nil {
+		mb.Logger.Error(format, v...)
 	}
 }
 
@@ -96,7 +108,7 @@ func (mb *serialPort) closeIdle() {
 	}
 
 	if idle := time.Since(mb.lastActivity); idle >= mb.IdleTimeout {
-		mb.logf("modbus: closing connection due to idle timeout: %v", idle)
+		mb.Debug("modbus: closing connection due to idle timeout: %v", idle)
 		mb.close()
 	}
 }

@@ -183,7 +183,7 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 			return
 		}
 		// Send data
-		mb.logf("modbus: send % x", aduRequest)
+		mb.Debug("modbus: send % x", aduRequest)
 		if _, err = mb.conn.Write(aduRequest); err != nil {
 			return
 		}
@@ -201,7 +201,7 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 			continue
 		}
 
-		mb.logf("modbus: close connection and retry, because of %v", err)
+		mb.Debug("modbus: close connection and retry, because of %v", err)
 
 		mb.close()
 		time.Sleep(mb.LinkRecoveryTimeout)
@@ -216,7 +216,7 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 			if err == nil {
 				err = verify(aduRequest, aduResponse)
 				if err == nil {
-					mb.logf("modbus: recv % x\n", aduResponse)
+					mb.Debug("modbus: recv % x\n", aduResponse)
 					return // everything is OK
 				}
 			}
@@ -382,9 +382,21 @@ func (mb *tcpTransporter) flush(b []byte) (err error) {
 	return
 }
 
-func (mb *tcpTransporter) logf(format string, v ...interface{}) {
+func (mb *tcpTransporter) Debug(format string, v ...interface{}) {
 	if mb.Logger != nil {
-		mb.Logger.Printf(format, v...)
+		mb.Logger.Debug(format, v...)
+	}
+}
+
+func (mb *tcpTransporter) Info(format string, v ...interface{}) {
+	if mb.Logger != nil {
+		mb.Logger.Info(format, v...)
+	}
+}
+
+func (mb *tcpTransporter) Error(format string, v ...interface{}) {
+	if mb.Logger != nil {
+		mb.Logger.Error(format, v...)
 	}
 }
 
@@ -407,7 +419,7 @@ func (mb *tcpTransporter) closeIdle() {
 	}
 
 	if idle := time.Since(mb.lastActivity); idle >= mb.IdleTimeout {
-		mb.logf("modbus: closing connection due to idle timeout: %v", idle)
+		mb.Debug("modbus: closing connection due to idle timeout: %v", idle)
 		mb.close()
 	}
 }

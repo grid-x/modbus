@@ -11,7 +11,9 @@ import (
 
 // logger is the interface to the required logging functions
 type logger interface {
-	Printf(format string, v ...interface{})
+	Debug(format string, args ...interface{})
+	Info(format string, args ...interface{})
+	Error(format string, args ...interface{})
 }
 
 // ClientHandler is the interface that groups the Packager and Transporter methods.
