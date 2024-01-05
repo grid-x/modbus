@@ -22,7 +22,7 @@ import (
 type logger struct {
 }
 
-func New(out io.Writer, prefix string, flag int) logger {
+func newLogger(out io.Writer, prefix string, flag int) logger {
 	log.SetOutput(out)
 	log.SetPrefix(prefix)
 	log.SetFlags(flag)
@@ -102,7 +102,7 @@ func main() {
 		return
 	}
 
-	logger := New(os.Stdout, "", 0)
+	logger := newLogger(os.Stdout, "", 0)
 	if *register > math.MaxUint16 || *register < 0 {
 		logger.Fatalf("invalid register value: %d", *register)
 	}
