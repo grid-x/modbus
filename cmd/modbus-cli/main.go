@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log/slog"
+	"log"
 	"math"
 	"net/url"
 	"os"
@@ -18,6 +18,44 @@ import (
 	"github.com/grid-x/modbus"
 	"github.com/grid-x/serial"
 )
+
+type logger struct {
+}
+
+func New(out io.Writer, prefix string, flag int) logger {
+	log.SetOutput(out)
+	log.SetPrefix(prefix)
+	log.SetFlags(flag)
+	return logger{}
+}
+
+func (l logger) Printf(format string, v ...interface{}) {
+	log.Printf(format, v...)
+}
+
+func (l logger) Println(format string, v ...interface{}) {
+	log.Printf(format, v...)
+}
+
+func (l logger) Debug(format string, v ...interface{}) {
+	log.Printf("DEBUG: "+format, v...)
+}
+
+func (l logger) Info(format string, v ...interface{}) {
+	log.Printf("INFO: "+format, v...)
+}
+
+func (l logger) Error(format string, v ...interface{}) {
+	log.Printf("ERROR: "+format, v...)
+}
+
+func (l logger) Fatalf(format string, v ...interface{}) {
+	log.Fatalf(format, v...)
+}
+
+func (l logger) Fatal(v ...interface{}) {
+	log.Fatal(v...)
+}
 
 func main() {
 	var opt option
@@ -64,12 +102,9 @@ func main() {
 		return
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := New(os.Stdout, "", 0)
 	if *register > math.MaxUint16 || *register < 0 {
-		logger.Error("invalid register value", slog.Attr{
-			Key:   "registerValue",
-			Value: slog.IntValue(*register),
-		})
+		logger.Fatalf("invalid register value: %d", *register)
 	}
 
 	startReg := uint16(*register)
@@ -92,12 +127,10 @@ func main() {
 
 	handler, err := newHandler(opt)
 	if err != nil {
-		logger.Error("%s", err)
-		os.Exit(-1)
+		logger.Fatal(err)
 	}
 	if err := handler.Connect(); err != nil {
-		logger.Error("%s", err)
-		os.Exit(-1)
+		log.Fatal(err)
 	}
 	defer handler.Close()
 
@@ -105,10 +138,9 @@ func main() {
 
 	result, err := exec(client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity)
 	if err != nil && strings.Contains(err.Error(), "crc") && *ignoreCRCError {
-		logger.Debug("ignoring crc error: %+v\n", err)
+		logger.Printf("ignoring crc error: %+v\n", err)
 	} else if err != nil {
-		logger.Error("%s", err)
-		os.Exit(-1)
+		logger.Fatal(err)
 	}
 
 	var res string
@@ -122,22 +154,16 @@ func main() {
 	}
 
 	if err != nil {
-		logger.Error("%s", err)
-		os.Exit(-1)
+		logger.Fatal(err)
 	}
 
-	logger.Info(res)
+	logger.Println(res)
 
 	if *filename != "" {
 		if err := resultToFile([]byte(res), *filename); err != nil {
-			logger.Error("%s", err)
-			os.Exit(-1)
+			logger.Fatal(err)
 		}
-
-		logger.Debug("file successfully written", slog.Attr{
-			Key:   "filename",
-			Value: slog.StringValue(*filename),
-		})
+		logger.Printf("%s successfully written\n", *filename)
 	}
 }
 
@@ -418,12 +444,6 @@ func resultToString(r []byte, order binary.ByteOrder, forcedOrder string, varTyp
 		return fmt.Sprintf("%f", data), nil
 	}
 	return "", fmt.Errorf("unsupported datatype: %s", varType)
-}
-
-type logger interface {
-	Debug(format string, args ...interface{})
-	Info(format string, args ...interface{})
-	Error(format string, args ...interface{})
 }
 
 type option struct {
