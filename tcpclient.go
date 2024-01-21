@@ -5,9 +5,11 @@
 package modbus
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -136,7 +138,7 @@ type tcpTransporter struct {
 	// Silent period after successful connection
 	ConnectDelay time.Duration
 	// Transmission logger
-	Logger logger
+	Logger *slog.Logger
 
 	// TCP connection
 	mu           sync.Mutex
@@ -397,6 +399,24 @@ func (mb *tcpTransporter) Info(format string, v ...interface{}) {
 func (mb *tcpTransporter) Error(format string, v ...interface{}) {
 	if mb.Logger != nil {
 		mb.Logger.Error(format, v...)
+	}
+}
+
+func (mb *tcpTransporter) DebugContext(ctx context.Context, format string, v ...interface{}) {
+	if mb.Logger != nil {
+		mb.Logger.DebugContext(ctx, format, v...)
+	}
+}
+
+func (mb *tcpTransporter) InfoContext(ctx context.Context, format string, v ...interface{}) {
+	if mb.Logger != nil {
+		mb.Logger.InfoContext(ctx, format, v...)
+	}
+}
+
+func (mb *tcpTransporter) ErrorContext(ctx context.Context, format string, v ...interface{}) {
+	if mb.Logger != nil {
+		mb.Logger.ErrorContext(ctx, format, v...)
 	}
 }
 

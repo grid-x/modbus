@@ -6,11 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
+	"log/slog"
 	"math"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -18,44 +19,6 @@ import (
 	"github.com/grid-x/modbus"
 	"github.com/grid-x/serial"
 )
-
-type logger struct {
-}
-
-func newLogger(out io.Writer, prefix string, flag int) logger {
-	log.SetOutput(out)
-	log.SetPrefix(prefix)
-	log.SetFlags(flag)
-	return logger{}
-}
-
-func (l logger) Printf(format string, v ...interface{}) {
-	log.Printf(format, v...)
-}
-
-func (l logger) Println(format string, v ...interface{}) {
-	log.Printf(format, v...)
-}
-
-func (l logger) Debug(format string, v ...interface{}) {
-	log.Printf("DEBUG: "+format, v...)
-}
-
-func (l logger) Info(format string, v ...interface{}) {
-	log.Printf("INFO: "+format, v...)
-}
-
-func (l logger) Error(format string, v ...interface{}) {
-	log.Printf("ERROR: "+format, v...)
-}
-
-func (l logger) Fatalf(format string, v ...interface{}) {
-	log.Fatalf(format, v...)
-}
-
-func (l logger) Fatal(v ...interface{}) {
-	log.Fatal(v...)
-}
 
 func main() {
 	var opt option
@@ -102,9 +65,11 @@ func main() {
 		return
 	}
 
-	logger := newLogger(os.Stdout, "", 0)
+	logger := slog.Default()
 	if *register > math.MaxUint16 || *register < 0 {
-		logger.Fatalf("invalid register value: %d", *register)
+		intRegister := *register
+		logger.Error("invalid register value: " + strconv.Itoa(intRegister))
+		os.Exit(-1)
 	}
 
 	startReg := uint16(*register)
@@ -127,7 +92,8 @@ func main() {
 
 	handler, err := newHandler(opt)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Error(err.Error())
+		os.Exit(-1)
 	}
 	if err := handler.Connect(); err != nil {
 		log.Fatal(err)
@@ -138,9 +104,10 @@ func main() {
 
 	result, err := exec(client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity)
 	if err != nil && strings.Contains(err.Error(), "crc") && *ignoreCRCError {
-		logger.Printf("ignoring crc error: %+v\n", err)
+		logger.Info("ignoring crc error: %+v\n", err)
 	} else if err != nil {
-		logger.Fatal(err)
+		logger.Error(err.Error())
+		os.Exit(-1)
 	}
 
 	var res string
@@ -154,16 +121,19 @@ func main() {
 	}
 
 	if err != nil {
-		logger.Fatal(err)
+		logger.Error(err.Error())
+		os.Exit(-1)
 	}
 
-	logger.Println(res)
+	logger.Info(res)
 
 	if *filename != "" {
 		if err := resultToFile([]byte(res), *filename); err != nil {
-			logger.Fatal(err)
+			logger.Error(err.Error())
+			os.Exit(-1)
 		}
-		logger.Printf("%s successfully written\n", *filename)
+		fName := *filename
+		logger.Info(fName + " successfully written\n")
 	}
 }
 
@@ -268,7 +238,7 @@ func convertToBytes(eType string, order binary.ByteOrder, forcedOrder string, va
 }
 
 func resultToFile(r []byte, filename string) error {
-	return ioutil.WriteFile(filename, r, 0644)
+	return os.WriteFile(filename, r, 0644)
 }
 
 func resultToRawString(r []byte, startReg int) (string, error) {
@@ -451,7 +421,7 @@ type option struct {
 	slaveID int
 	timeout time.Duration
 
-	logger logger
+	logger *slog.Logger
 
 	rtu struct {
 		baudrate int
