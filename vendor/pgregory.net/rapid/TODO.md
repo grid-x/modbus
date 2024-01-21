@@ -1,32 +1,14 @@
 # TODO
 
-## Docs
-
-- document every exported symbol
-- doc.go paragraph about defining properties
-- more examples
-  - HTTP API testing
-  - buffers?
-  - DI?
-- tutorial?
-
-## Big things
-
-- explicit examples support (based on `refDraws` shrink test machinery)
-- failure persistence
-
 ## Generators
 
 - times, durations, locations
 - complex numbers
 - big numbers
 - ip addresses & masks
-- deferred
 - subset-of-slice
-- permutation-of-slice
 - runes with rune/range blacklist
 - recursive (base + extend)
-- arbitrary(type)
 
 ## Shrinking
 
@@ -40,7 +22,7 @@
   - questions:
     - how to deal with misalignment?
     - how to determine the group to randomize?
-      - e.g. right now for floats it is not an explicit group but rather a bunch of nearby blocks 
+      - e.g. right now for floats it is not an explicit group but rather a bunch of nearby blocks
 - use fewer bits for genFloat01 to make shrinking a bit faster
 - shrink duplicates together
   - generalize to arbitrary "offsets" for pairs
@@ -85,8 +67,6 @@
   - because min number defines the "magnitude" of the whole thing, kind of?
   - so when we are generating numbers in [1000000; +inf) we do not stick with 1000000 too hard
 - more powerful assume/filter (look at what hypothesis is doing)
-- builtin go-fuzz integration
-  - compare property-based testing with fuzzing in README
 - incorporate special case checking (bounds esp.)
 
 ## Wild ideas
