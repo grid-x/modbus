@@ -5,6 +5,7 @@ package serial
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"syscall"
@@ -112,6 +113,9 @@ func (p *port) Read(b []byte) (n int, err error) {
 		return
 	}
 	n, err = syscall.Read(fd, b)
+	if n == 0 && err == nil {
+		err = io.ErrUnexpectedEOF
+	}
 	return
 }
 

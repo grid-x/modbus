@@ -9,7 +9,7 @@ package rapid
 import (
 	"bytes"
 	"fmt"
-	"reflect"
+	"math"
 	"regexp"
 	"regexp/syntax"
 	"strings"
@@ -19,11 +19,8 @@ import (
 )
 
 var (
-	stringType    = reflect.TypeOf("")
-	byteSliceType = reflect.TypeOf([]byte(nil))
-
 	defaultRunes = []rune{
-		'?',
+		'A', 'a', '?',
 		'~', '!', '@', '#', '$', '%', '^', '&', '*', '_', '-', '+', '=',
 		'.', ',', ':', ';',
 		' ', '\t', '\r', '\n',
@@ -73,15 +70,18 @@ type compiledRegexp struct {
 	re  *regexp.Regexp
 }
 
-func Rune() *Generator {
+// Rune creates a rune generator. Rune is equivalent to [RuneFrom] with default set of runes and tables.
+func Rune() *Generator[rune] {
 	return runesFrom(true, defaultRunes, defaultTables...)
 }
 
-func RuneFrom(runes []rune, tables ...*unicode.RangeTable) *Generator {
+// RuneFrom creates a rune generator from provided runes and tables.
+// RuneFrom panics if both runes and tables are empty. RuneFrom panics if tables contain an empty table.
+func RuneFrom(runes []rune, tables ...*unicode.RangeTable) *Generator[rune] {
 	return runesFrom(false, runes, tables...)
 }
 
-func runesFrom(default_ bool, runes []rune, tables ...*unicode.RangeTable) *Generator {
+func runesFrom(default_ bool, runes []rune, tables ...*unicode.RangeTable) *Generator[rune] {
 	if len(tables) == 0 {
 		assertf(len(runes) > 0, "at least one rune should be specified")
 	}
@@ -103,7 +103,7 @@ func runesFrom(default_ bool, runes []rune, tables ...*unicode.RangeTable) *Gene
 		assertf(len(tables_[i]) > 0, "empty *unicode.RangeTable %v", i)
 	}
 
-	return newGenerator(&runeGen{
+	return newGenerator[rune](&runeGen{
 		die:      newLoadedDie(weights),
 		runes:    runes,
 		tables:   tables_,
@@ -126,11 +126,7 @@ func (g *runeGen) String() string {
 	}
 }
 
-func (g *runeGen) type_() reflect.Type {
-	return int32Type
-}
-
-func (g *runeGen) value(t *T) value {
+func (g *runeGen) value(t *T) rune {
 	n := g.die.roll(t.s)
 
 	runes := g.runes
@@ -143,106 +139,112 @@ func (g *runeGen) value(t *T) value {
 	return runes[genIndex(t.s, len(runes), true)]
 }
 
-func String() *Generator {
+// String is a shorthand for [StringOf]([Rune]()).
+func String() *Generator[string] {
 	return StringOf(anyRuneGen)
 }
 
-func StringN(minRunes int, maxRunes int, maxLen int) *Generator {
+// StringN is a shorthand for [StringOfN]([Rune](), minRunes, maxRunes, maxLen).
+func StringN(minRunes int, maxRunes int, maxLen int) *Generator[string] {
 	return StringOfN(anyRuneGen, minRunes, maxRunes, maxLen)
 }
 
-func StringOf(elem *Generator) *Generator {
+// StringOf is a shorthand for [StringOfN](elem, -1, -1, -1).
+func StringOf(elem *Generator[rune]) *Generator[string] {
 	return StringOfN(elem, -1, -1, -1)
 }
 
-func StringOfN(elem *Generator, minElems int, maxElems int, maxLen int) *Generator {
-	assertValidRange(minElems, maxElems)
-	assertf(elem.type_() == int32Type || elem.type_() == uint8Type, "element generator should generate runes or bytes, not %v", elem.type_())
-	assertf(maxLen < 0 || maxLen >= maxElems, "maximum length (%v) should not be less than maximum number of elements (%v)", maxLen, maxElems)
+// StringOfN creates a UTF-8 string generator.
+// If minRunes >= 0, generated strings have minimum minRunes runes.
+// If maxRunes >= 0, generated strings have maximum maxRunes runes.
+// If maxLen >= 0, generates strings have maximum length of maxLen.
+// StringOfN panics if maxRunes >= 0 and minRunes > maxRunes.
+// StringOfN panics if maxLen >= 0 and maxLen < maxRunes.
+func StringOfN(elem *Generator[rune], minRunes int, maxRunes int, maxLen int) *Generator[string] {
+	assertValidRange(minRunes, maxRunes)
+	assertf(maxLen < 0 || maxLen >= maxRunes, "maximum length (%v) should not be less than maximum number of runes (%v)", maxLen, maxRunes)
 
-	return newGenerator(&stringGen{
+	return newGenerator[string](&stringGen{
 		elem:     elem,
-		minElems: minElems,
-		maxElems: maxElems,
+		minRunes: minRunes,
+		maxRunes: maxRunes,
 		maxLen:   maxLen,
 	})
 }
 
 type stringGen struct {
-	elem     *Generator
-	minElems int
-	maxElems int
+	elem     *Generator[rune]
+	minRunes int
+	maxRunes int
 	maxLen   int
 }
 
 func (g *stringGen) String() string {
 	if g.elem == anyRuneGen {
-		if g.minElems < 0 && g.maxElems < 0 && g.maxLen < 0 {
+		if g.minRunes < 0 && g.maxRunes < 0 && g.maxLen < 0 {
 			return "String()"
 		} else {
-			return fmt.Sprintf("StringN(minRunes=%v, maxRunes=%v, maxLen=%v)", g.minElems, g.maxElems, g.maxLen)
+			return fmt.Sprintf("StringN(minRunes=%v, maxRunes=%v, maxLen=%v)", g.minRunes, g.maxRunes, g.maxLen)
 		}
 	} else {
-		if g.minElems < 0 && g.maxElems < 0 && g.maxLen < 0 {
+		if g.minRunes < 0 && g.maxRunes < 0 && g.maxLen < 0 {
 			return fmt.Sprintf("StringOf(%v)", g.elem)
 		} else {
-			return fmt.Sprintf("StringOfN(%v, minElems=%v, maxElems=%v, maxLen=%v)", g.elem, g.minElems, g.maxElems, g.maxLen)
+			return fmt.Sprintf("StringOfN(%v, minRunes=%v, maxRunes=%v, maxLen=%v)", g.elem, g.minRunes, g.maxRunes, g.maxLen)
 		}
 	}
 }
 
-func (g *stringGen) type_() reflect.Type {
-	return stringType
-}
-
-func (g *stringGen) value(t *T) value {
-	repeat := newRepeat(g.minElems, g.maxElems, -1)
+func (g *stringGen) value(t *T) string {
+	repeat := newRepeat(g.minRunes, g.maxRunes, -1, g.elem.String())
 
 	var b strings.Builder
 	b.Grow(repeat.avg())
 
-	if g.elem.type_() == int32Type {
-		maxLen := g.maxLen
-		if maxLen < 0 {
-			maxLen = maxInt
-		}
+	maxLen := g.maxLen
+	if maxLen < 0 {
+		maxLen = math.MaxInt
+	}
 
-		for repeat.more(t.s, g.elem.String()) {
-			r := g.elem.value(t).(rune)
-			n := utf8.RuneLen(r)
+	for repeat.more(t.s) {
+		r := g.elem.value(t)
+		n := utf8.RuneLen(r)
 
-			if n < 0 || b.Len()+n > maxLen {
-				repeat.reject()
-			} else {
-				b.WriteRune(r)
-			}
-		}
-	} else {
-		for repeat.more(t.s, g.elem.String()) {
-			b.WriteByte(g.elem.value(t).(byte))
+		if n < 0 || b.Len()+n > maxLen {
+			repeat.reject()
+		} else {
+			b.WriteRune(r)
 		}
 	}
 
 	return b.String()
 }
 
-func StringMatching(expr string) *Generator {
-	return matching(expr, true)
-}
-
-func SliceOfBytesMatching(expr string) *Generator {
-	return matching(expr, false)
-}
-
-func matching(expr string, str bool) *Generator {
+// StringMatching creates a UTF-8 string generator matching the provided [syntax.Perl] regular expression.
+func StringMatching(expr string) *Generator[string] {
 	compiled, err := compileRegexp(expr)
 	assertf(err == nil, "%v", err)
 
-	return newGenerator(&regexpGen{
-		str:  str,
-		expr: expr,
-		syn:  compiled.syn,
-		re:   compiled.re,
+	return newGenerator[string](&regexpStringGen{
+		regexpGen{
+			expr: expr,
+			syn:  compiled.syn,
+			re:   compiled.re,
+		},
+	})
+}
+
+// SliceOfBytesMatching creates a UTF-8 byte slice generator matching the provided [syntax.Perl] regular expression.
+func SliceOfBytesMatching(expr string) *Generator[[]byte] {
+	compiled, err := compileRegexp(expr)
+	assertf(err == nil, "%v", err)
+
+	return newGenerator[[]byte](&regexpSliceGen{
+		regexpGen{
+			expr: expr,
+			syn:  compiled.syn,
+			re:   compiled.re,
+		},
 	})
 }
 
@@ -251,58 +253,49 @@ type runeWriter interface {
 }
 
 type regexpGen struct {
-	str  bool
 	expr string
 	syn  *syntax.Regexp
 	re   *regexp.Regexp
 }
+type regexpStringGen struct{ regexpGen }
+type regexpSliceGen struct{ regexpGen }
 
-func (g *regexpGen) String() string {
-	if g.str {
-		return fmt.Sprintf("StringMatching(%q)", g.expr)
-	} else {
-		return fmt.Sprintf("SliceOfBytesMatching(%q)", g.expr)
-	}
+func (g *regexpStringGen) String() string {
+	return fmt.Sprintf("StringMatching(%q)", g.expr)
+}
+func (g *regexpSliceGen) String() string {
+	return fmt.Sprintf("SliceOfBytesMatching(%q)", g.expr)
 }
 
-func (g *regexpGen) type_() reflect.Type {
-	if g.str {
-		return stringType
-	} else {
-		return byteSliceType
-	}
-}
-
-func (g *regexpGen) maybeString(t *T) value {
+func (g *regexpStringGen) maybeString(t *T) (string, bool) {
 	b := &strings.Builder{}
 	g.build(b, g.syn, t)
 	v := b.String()
 
 	if g.re.MatchString(v) {
-		return v
+		return v, true
 	} else {
-		return nil
+		return "", false
 	}
 }
 
-func (g *regexpGen) maybeSlice(t *T) value {
+func (g *regexpSliceGen) maybeSlice(t *T) ([]byte, bool) {
 	b := &bytes.Buffer{}
 	g.build(b, g.syn, t)
 	v := b.Bytes()
 
 	if g.re.Match(v) {
-		return v
+		return v, true
 	} else {
-		return nil
+		return nil, false
 	}
 }
 
-func (g *regexpGen) value(t *T) value {
-	if g.str {
-		return find(g.maybeString, t, small)
-	} else {
-		return find(g.maybeSlice, t, small)
-	}
+func (g *regexpStringGen) value(t *T) string {
+	return find(g.maybeString, t, small)
+}
+func (g *regexpSliceGen) value(t *T) []byte {
+	return find(g.maybeSlice, t, small)
 }
 
 func (g *regexpGen) build(w runeWriter, re *syntax.Regexp, t *T) {
@@ -326,7 +319,7 @@ func (g *regexpGen) build(w runeWriter, re *syntax.Regexp, t *T) {
 		case syntax.OpAnyCharNotNL:
 			sub = anyRuneGenNoNL
 		}
-		r := sub.value(t).(rune)
+		r := sub.value(t)
 		_, _ = w.WriteRune(maybeFoldCase(t.s, r, re.Flags))
 	case syntax.OpBeginLine, syntax.OpEndLine,
 		syntax.OpBeginText, syntax.OpEndText,
@@ -344,8 +337,8 @@ func (g *regexpGen) build(w runeWriter, re *syntax.Regexp, t *T) {
 		case syntax.OpQuest:
 			min, max = 0, 1
 		}
-		repeat := newRepeat(min, max, -1)
-		for repeat.more(t.s, regexpName(re.Sub[0])) {
+		repeat := newRepeat(min, max, -1, regexpName(re.Sub[0]))
+		for repeat.more(t.s) {
 			g.build(w, re.Sub[0], t)
 		}
 	case syntax.OpConcat:
@@ -375,20 +368,28 @@ func maybeFoldCase(s bitStream, r rune, flags syntax.Flags) rune {
 	return r
 }
 
-func expandRangeTable(t *unicode.RangeTable, key interface{}) []rune {
+func expandRangeTable(t *unicode.RangeTable, key any) []rune {
 	cached, ok := expandedTables.Load(key)
 	if ok {
 		return cached.([]rune)
 	}
 
-	var ret []rune
+	n := 0
 	for _, r := range t.R16 {
-		for i := r.Lo; i <= r.Hi; i += r.Stride {
+		n += int(r.Hi-r.Lo)/int(r.Stride) + 1
+	}
+	for _, r := range t.R32 {
+		n += int(r.Hi-r.Lo)/int(r.Stride) + 1
+	}
+
+	ret := make([]rune, 0, n)
+	for _, r := range t.R16 {
+		for i := uint32(r.Lo); i <= uint32(r.Hi); i += uint32(r.Stride) {
 			ret = append(ret, rune(i))
 		}
 	}
 	for _, r := range t.R32 {
-		for i := r.Lo; i <= r.Hi; i += r.Stride {
+		for i := uint64(r.Lo); i <= uint64(r.Hi); i += uint64(r.Stride) {
 			ret = append(ret, rune(i))
 		}
 	}
@@ -431,14 +432,16 @@ func regexpName(re *syntax.Regexp) string {
 	return s
 }
 
-func charClassGen(re *syntax.Regexp) *Generator {
+func charClassGen(re *syntax.Regexp) *Generator[rune] {
 	cached, ok := charClassGens.Load(regexpName(re))
 	if ok {
-		return cached.(*Generator)
+		return cached.(*Generator[rune])
 	}
 
-	t := &unicode.RangeTable{}
+	t := &unicode.RangeTable{R32: make([]unicode.Range32, 0, len(re.Rune)/2)}
 	for i := 0; i < len(re.Rune); i += 2 {
+		// not a valid unicode.Range32, since it requires that Lo and Hi must always be >= 1<<16
+		// however, we don't really care, since the only use of these ranges is as input to expandRangeTable
 		t.R32 = append(t.R32, unicode.Range32{
 			Lo:     uint32(re.Rune[i]),
 			Hi:     uint32(re.Rune[i+1]),
@@ -446,7 +449,7 @@ func charClassGen(re *syntax.Regexp) *Generator {
 		})
 	}
 
-	g := newGenerator(&runeGen{
+	g := newGenerator[rune](&runeGen{
 		die:    newLoadedDie([]int{1}),
 		tables: [][]rune{expandRangeTable(t, regexpName(re))},
 	})

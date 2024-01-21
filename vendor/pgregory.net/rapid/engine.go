@@ -8,11 +8,12 @@ package rapid
 
 import (
 	"bytes"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"reflect"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -26,6 +27,9 @@ const (
 	invalidChecksMult = 10
 	exampleMaxTries   = 1000
 
+	maxTestTimeout  = 24 * time.Hour
+	shrinkStepBound = 10 * time.Second // can be improved by taking average checkOnce runtime into account
+
 	tracebackLen  = 32
 	tracebackStop = "pgregory.net/rapid.checkOnce"
 	runtimePrefix = "runtime."
@@ -34,12 +38,9 @@ const (
 var (
 	flags cmdline
 
-	emptyStructType  = reflect.TypeOf(struct{}{})
-	emptyStructValue = reflect.ValueOf(struct{}{})
-
 	tracebackBlacklist = map[string]bool{
-		"pgregory.net/rapid.(*customGen).maybeValue.func1": true,
-		"pgregory.net/rapid.runAction.func1":               true,
+		"pgregory.net/rapid.(*customGen[...]).maybeValue.func1": true,
+		"pgregory.net/rapid.runAction.func1":                    true,
 	}
 )
 
@@ -47,6 +48,7 @@ type cmdline struct {
 	checks     int
 	steps      int
 	failfile   string
+	nofailfile bool
 	seed       uint64
 	log        bool
 	verbose    bool
@@ -57,8 +59,9 @@ type cmdline struct {
 
 func init() {
 	flag.IntVar(&flags.checks, "rapid.checks", 100, "rapid: number of checks to perform")
-	flag.IntVar(&flags.steps, "rapid.steps", 100, "rapid: number of state machine steps to perform")
+	flag.IntVar(&flags.steps, "rapid.steps", 30, "rapid: average number of Repeat actions to execute")
 	flag.StringVar(&flags.failfile, "rapid.failfile", "", "rapid: fail file to use to reproduce test failure")
+	flag.BoolVar(&flags.nofailfile, "rapid.nofailfile", false, "rapid: do not write fail files on test failures")
 	flag.Uint64Var(&flags.seed, "rapid.seed", 0, "rapid: PRNG seed to start with (0 to use a random one)")
 	flag.BoolVar(&flags.log, "rapid.log", false, "rapid: eager verbose output to stdout (to aid with unrecoverable test failures)")
 	flag.BoolVar(&flags.verbose, "rapid.v", false, "rapid: verbose output")
@@ -73,73 +76,146 @@ func assert(ok bool) {
 	}
 }
 
-func assertf(ok bool, format string, args ...interface{}) {
+func assertf(ok bool, format string, args ...any) {
 	if !ok {
 		panic(fmt.Sprintf(format, args...))
 	}
 }
 
 func assertValidRange(min int, max int) {
-	assertf(max < 0 || min <= max, fmt.Sprintf("invalid range [%d, %d]", min, max))
+	if max >= 0 && min > max {
+		panic(fmt.Sprintf("invalid range [%d, %d]", min, max))
+	}
+}
+
+func checkDeadline(tb tb) time.Time {
+	t, ok := tb.(*testing.T)
+	if !ok {
+		return time.Now().Add(maxTestTimeout)
+	}
+	d, ok := t.Deadline()
+	if !ok {
+		return time.Now().Add(maxTestTimeout)
+	}
+	return d
+}
+
+func shrinkDeadline(deadline time.Time) time.Time {
+	d := time.Now().Add(flags.shrinkTime)
+	max := deadline.Add(-shrinkStepBound) // account for the fact that shrink deadline is checked before the step
+	if d.After(max) {
+		d = max
+	}
+	return d
 }
 
 // Check fails the current test if rapid can find a test case which falsifies prop.
 //
 // Property is falsified in case of a panic or a call to
-// (*T).Fatalf, (*T).Fatal, (*T).Errorf, (*T).Error, (*T).FailNow or (*T).Fail.
-func Check(t *testing.T, prop func(*T)) {
+// [*T.Fatalf], [*T.Fatal], [*T.Errorf], [*T.Error], [*T.FailNow] or [*T.Fail].
+func Check(t TB, prop func(*T)) {
 	t.Helper()
-	checkTB(t, prop)
+	checkTB(t, checkDeadline(t), prop)
 }
 
 // MakeCheck is a convenience function for defining subtests suitable for
-// (*testing.T).Run. It allows you to write this:
+// [*testing.T.Run]. It allows you to write this:
 //
-//   t.Run("subtest name", rapid.MakeCheck(func(t *rapid.T) {
-//       // test code
-//   }))
+//	t.Run("subtest name", rapid.MakeCheck(func(t *rapid.T) {
+//	    // test code
+//	}))
 //
 // instead of this:
 //
-//   t.Run("subtest name", func(t *testing.T) {
-//       rapid.Check(t, func(t *rapid.T) {
-//           // test code
-//       })
-//   })
-//
+//	t.Run("subtest name", func(t *testing.T) {
+//	    rapid.Check(t, func(t *rapid.T) {
+//	        // test code
+//	    })
+//	})
 func MakeCheck(prop func(*T)) func(*testing.T) {
 	return func(t *testing.T) {
 		t.Helper()
-		checkTB(t, prop)
+		checkTB(t, checkDeadline(t), prop)
 	}
 }
 
-func checkTB(tb tb, prop func(*T)) {
+// MakeFuzz creates a fuzz target for [*testing.F.Fuzz]:
+//
+//	func FuzzFoo(f *testing.F) {
+//	    f.Fuzz(rapid.MakeFuzz(func(t *rapid.T) {
+//	        // test code
+//	    }))
+//	}
+func MakeFuzz(prop func(*T)) func(*testing.T, []byte) {
+	return func(t *testing.T, input []byte) {
+		t.Helper()
+		checkFuzz(t, prop, input)
+	}
+}
+
+func checkFuzz(tb tb, prop func(*T), input []byte) {
 	tb.Helper()
 
+	var buf []uint64
+	for len(input) > 0 {
+		var tmp [8]byte
+		n := copy(tmp[:], input)
+		buf = append(buf, binary.LittleEndian.Uint64(tmp[:]))
+		input = input[n:]
+	}
+
+	t := newT(tb, newBufBitStream(buf, false), true, nil)
+	err := checkOnce(t, prop)
+
+	switch {
+	case err == nil:
+		// do nothing
+	case err.isInvalidData():
+		tb.SkipNow()
+	case err.isStopTest():
+		tb.Fatalf("[rapid] failed: %v", err)
+	default:
+		tb.Fatalf("[rapid] panic: %v\nTraceback:\n%v", err, traceback(err))
+	}
+}
+
+func checkTB(tb tb, deadline time.Time, prop func(*T)) {
+	tb.Helper()
+
+	checks := flags.checks
+	if testing.Short() {
+		checks /= 5
+	}
+
 	start := time.Now()
-	valid, invalid, seed, buf, err1, err2 := doCheck(tb, flags.failfile, flags.checks, baseSeed(), prop)
+	valid, invalid, earlyExit, seed, failfile, buf, err1, err2 := doCheck(tb, deadline, checks, baseSeed(), flags.failfile, true, prop)
 	dt := time.Since(start)
 
 	if err1 == nil && err2 == nil {
-		if valid == flags.checks {
+		if valid == checks || (earlyExit && valid > 0) {
 			tb.Logf("[rapid] OK, passed %v tests (%v)", valid, dt)
 		} else {
 			tb.Errorf("[rapid] only generated %v valid tests from %v total (%v)", valid, valid+invalid, dt)
 		}
 	} else {
-		repr := fmt.Sprintf("-rapid.seed=%d", seed)
-		if flags.failfile != "" && seed == 0 {
-			repr = fmt.Sprintf("-rapid.failfile=%q", flags.failfile)
-		} else {
-			failfile := failFileName(tb.Name())
+		if failfile == "" && !flags.nofailfile {
+			_, failfile = failFileName(tb.Name())
 			out := captureTestOutput(tb, prop, buf)
-			err := saveFailFile(failfile, out, buf)
-			if err == nil {
-				repr = fmt.Sprintf("-rapid.failfile=%q", failfile)
-			} else {
+			err := saveFailFile(failfile, rapidVersion, out, seed, buf)
+			if err != nil {
 				tb.Logf("[rapid] %v", err)
+				failfile = ""
 			}
+		}
+
+		var repr string
+		switch {
+		case failfile != "" && seed != 0:
+			repr = fmt.Sprintf("-rapid.failfile=%q (or -rapid.seed=%d)", failfile, seed)
+		case failfile != "":
+			repr = fmt.Sprintf("-rapid.failfile=%q", failfile)
+		case seed != 0:
+			repr = fmt.Sprintf("-rapid.seed=%d", seed)
 		}
 
 		name := regexp.QuoteMeta(tb.Name())
@@ -161,21 +237,29 @@ func checkTB(tb tb, prop func(*T)) {
 	}
 }
 
-func doCheck(tb tb, failfile string, checks int, seed uint64, prop func(*T)) (int, int, uint64, []uint64, *testError, *testError) {
+func doCheck(tb tb, deadline time.Time, checks int, seed uint64, failfile string, globFailFiles bool, prop func(*T)) (int, int, bool, uint64, string, []uint64, *testError, *testError) {
 	tb.Helper()
 
 	assertf(!tb.Failed(), "check function called with *testing.T which has already failed")
 
+	var failfiles []string
 	if failfile != "" {
+		failfiles = []string{failfile}
+	}
+	if globFailFiles {
+		matches, _ := filepath.Glob(failFilePattern(tb.Name()))
+		failfiles = append(failfiles, matches...)
+	}
+	for _, failfile := range failfiles {
 		buf, err1, err2 := checkFailFile(tb, failfile, prop)
 		if err1 != nil || err2 != nil {
-			return 0, 0, 0, buf, err1, err2
+			return 0, 0, false, 0, failfile, buf, err1, err2
 		}
 	}
 
-	seed, valid, invalid, err1 := findBug(tb, checks, seed, prop)
+	valid, invalid, earlyExit, seed, err1 := findBug(tb, deadline, checks, seed, prop)
 	if err1 == nil {
-		return valid, invalid, 0, nil, nil, nil
+		return valid, invalid, earlyExit, 0, "", nil, nil, nil
 	}
 
 	s := newRandomBitStream(seed, true)
@@ -183,21 +267,25 @@ func doCheck(tb tb, failfile string, checks int, seed uint64, prop func(*T)) (in
 	t.Logf("[rapid] trying to reproduce the failure")
 	err2 := checkOnce(t, prop)
 	if !sameError(err1, err2) {
-		return valid, invalid, seed, s.data, err1, err2
+		return valid, invalid, false, seed, "", s.data, err1, err2
 	}
 
 	t.Logf("[rapid] trying to minimize the failing test case")
-	buf, err3 := shrink(tb, s.recordedBits, err2, prop)
+	buf, err3 := shrink(tb, shrinkDeadline(deadline), s.recordedBits, err2, prop)
 
-	return valid, invalid, seed, buf, err2, err3
+	return valid, invalid, false, seed, "", buf, err2, err3
 }
 
 func checkFailFile(tb tb, failfile string, prop func(*T)) ([]uint64, *testError, *testError) {
 	tb.Helper()
 
-	buf, err := loadFailFile(failfile)
+	version, _, buf, err := loadFailFile(failfile)
 	if err != nil {
 		tb.Logf("[rapid] ignoring fail file: %v", err)
+		return nil, nil, nil
+	}
+	if version != rapidVersion {
+		tb.Logf("[rapid] ignoring fail file: version %q differs from rapid version %q", version, rapidVersion)
 		return nil, nil, nil
 	}
 
@@ -220,7 +308,7 @@ func checkFailFile(tb tb, failfile string, prop func(*T)) ([]uint64, *testError,
 	return buf, err1, err2
 }
 
-func findBug(tb tb, checks int, seed uint64, prop func(*T)) (uint64, int, int, *testError) {
+func findBug(tb tb, deadline time.Time, checks int, seed uint64, prop func(*T)) (int, int, bool, uint64, *testError) {
 	tb.Helper()
 
 	var (
@@ -230,39 +318,49 @@ func findBug(tb tb, checks int, seed uint64, prop func(*T)) (uint64, int, int, *
 		invalid = 0
 	)
 
+	var total time.Duration
 	for valid < checks && invalid < checks*invalidChecksMult {
-		seed += uint64(valid) + uint64(invalid)
+		iter := valid + invalid
+		if iter > 0 && time.Until(deadline) < total/time.Duration(iter)*5 {
+			if t.shouldLog() {
+				t.Logf("[rapid] early exit after test #%v (%v)", iter, total)
+			}
+			return valid, invalid, true, 0, nil
+		}
+
+		seed += uint64(iter)
 		r.init(seed)
-		var start time.Time
+		start := time.Now()
 		if t.shouldLog() {
-			t.Logf("[rapid] test #%v start (seed %v)", valid+invalid+1, seed)
-			start = time.Now()
+			t.Logf("[rapid] test #%v start (seed %v)", iter+1, seed)
 		}
 
 		err := checkOnce(t, prop)
+		dt := time.Since(start)
+		total += dt
 		if err == nil {
 			if t.shouldLog() {
-				t.Logf("[rapid] test #%v OK (%v)", valid+invalid+1, time.Since(start))
+				t.Logf("[rapid] test #%v OK (%v)", iter+1, dt)
 			}
 			valid++
 		} else if err.isInvalidData() {
 			if t.shouldLog() {
-				t.Logf("[rapid] test #%v invalid (%v)", valid+invalid+1, time.Since(start))
+				t.Logf("[rapid] test #%v invalid (%v)", iter+1, dt)
 			}
 			invalid++
 		} else {
 			if t.shouldLog() {
-				t.Logf("[rapid] test #%v failed: %v", valid+invalid+1, err)
+				t.Logf("[rapid] test #%v failed: %v", iter+1, err)
 			}
-			return seed, valid, invalid, err
+			return valid, invalid, false, seed, err
 		}
 	}
 
-	return 0, valid, invalid, nil
+	return valid, invalid, false, 0, nil
 }
 
 func checkOnce(t *T, prop func(*T)) (err *testError) {
-	if t.tbLog && t.tb != nil {
+	if t.tbLog {
 		t.tb.Helper()
 	}
 	defer func() { err = panicToError(recover(), 3) }()
@@ -275,7 +373,7 @@ func checkOnce(t *T, prop func(*T)) (err *testError) {
 
 func captureTestOutput(tb tb, prop func(*T), buf []uint64) []byte {
 	var b bytes.Buffer
-	l := log.New(&b, fmt.Sprintf("%s ", tb.Name()), log.Ldate|log.Ltime) // TODO: enable log.Lmsgprefix once all supported versions of Go have it
+	l := log.New(&b, fmt.Sprintf("[%v] ", tb.Name()), log.Lmsgprefix|log.Ldate|log.Ltime|log.Lmicroseconds)
 	_ = checkOnce(newT(tb, newBufBitStream(buf, false), false, l), prop)
 	return b.Bytes()
 }
@@ -284,11 +382,11 @@ type invalidData string
 type stopTest string
 
 type testError struct {
-	data      interface{}
+	data      any
 	traceback string
 }
 
-func panicToError(p interface{}, skip int) *testError {
+func panicToError(p any, skip int) *testError {
 	if p == nil {
 		return nil
 	}
@@ -359,32 +457,64 @@ func traceback(err *testError) string {
 	return err.traceback
 }
 
-type tb interface {
+// TB is a common interface between [*testing.T], [*testing.B] and [*T].
+type TB interface {
 	Helper()
 	Name() string
-	Logf(format string, args ...interface{})
-	Log(args ...interface{})
-	Errorf(format string, args ...interface{})
-	Error(args ...interface{})
-	Fatalf(format string, args ...interface{})
-	Fatal(args ...interface{})
+	Logf(format string, args ...any)
+	Log(args ...any)
+	Skipf(format string, args ...any)
+	Skip(args ...any)
+	SkipNow()
+	Errorf(format string, args ...any)
+	Error(args ...any)
+	Fatalf(format string, args ...any)
+	Fatal(args ...any)
 	FailNow()
 	Fail()
 	Failed() bool
 }
 
+type tb TB // tb is a private copy of TB, made to avoid T having public fields
+
+type nilTB struct{}
+
+func (nilTB) Helper()               {}
+func (nilTB) Name() string          { return "" }
+func (nilTB) Logf(string, ...any)   {}
+func (nilTB) Log(...any)            {}
+func (nilTB) Skipf(string, ...any)  { panic("call to TB.Skipf() outside a test") }
+func (nilTB) Skip(...any)           { panic("call to TB.Skip() outside a test") }
+func (nilTB) SkipNow()              { panic("call to TB.SkipNow() outside a test") }
+func (nilTB) Errorf(string, ...any) { panic("call to TB.Errorf() outside a test") }
+func (nilTB) Error(...any)          { panic("call to TB.Error() outside a test") }
+func (nilTB) Fatalf(string, ...any) { panic("call to TB.Fatalf() outside a test") }
+func (nilTB) Fatal(...any)          { panic("call to TB.Fatal() outside a test") }
+func (nilTB) FailNow()              { panic("call to TB.FailNow() outside a test") }
+func (nilTB) Fail()                 { panic("call to TB.Fail() outside a test") }
+func (nilTB) Failed() bool          { panic("call to TB.Failed() outside a test") }
+
+// T is similar to [testing.T], but with extra bookkeeping for property-based tests.
+//
+// For tests to be reproducible, they should generally run in a single goroutine.
+// If concurrency is unavoidable, methods on *T, such as [*testing.T.Helper] and [*T.Errorf],
+// are safe for concurrent calls, but *Generator.Draw from a given *T is not.
 type T struct {
 	tb       // unnamed to force re-export of (*T).Helper()
 	tbLog    bool
 	rawLog   *log.Logger
 	s        bitStream
 	draws    int
-	refDraws []value
+	refDraws []any
 	mu       sync.RWMutex
 	failed   stopTest
 }
 
-func newT(tb tb, s bitStream, tbLog bool, rawLog *log.Logger, refDraws ...value) *T {
+func newT(tb tb, s bitStream, tbLog bool, rawLog *log.Logger, refDraws ...any) *T {
+	if tb == nil {
+		tb = nilTB{}
+	}
+
 	t := &T{
 		tb:       tb,
 		tbLog:    tbLog,
@@ -399,119 +529,93 @@ func newT(tb tb, s bitStream, tbLog bool, rawLog *log.Logger, refDraws ...value)
 			testName = tb.Name()
 		}
 
-		t.rawLog = log.New(os.Stdout, fmt.Sprintf("[%v] ", testName), 0)
+		t.rawLog = log.New(os.Stdout, fmt.Sprintf("[%v] ", testName), log.Lmsgprefix|log.Ldate|log.Ltime|log.Lmicroseconds)
 	}
 
 	return t
 }
 
-func (t *T) draw(g *Generator, label string) value {
-	v := g.value(t)
-
-	if len(t.refDraws) > 0 {
-		ref := t.refDraws[t.draws]
-		if !reflect.DeepEqual(v, ref) {
-			t.tb.Fatalf("draw %v differs: %#v vs expected %#v", t.draws, v, ref)
-		}
-	}
-
-	if t.tbLog || t.rawLog != nil {
-		if label == "" {
-			label = fmt.Sprintf("#%v", t.draws)
-		}
-
-		if t.tbLog && t.tb != nil {
-			t.tb.Helper()
-		}
-		t.Logf("[rapid] draw %v: %#v", label, v)
-	}
-
-	t.draws++
-
-	return v
-}
-
 func (t *T) shouldLog() bool {
-	return t.rawLog != nil || (t.tbLog && t.tb != nil)
+	return t.rawLog != nil || t.tbLog
 }
 
-func (t *T) Logf(format string, args ...interface{}) {
+func (t *T) Logf(format string, args ...any) {
 	if t.rawLog != nil {
 		t.rawLog.Printf(format, args...)
-	} else if t.tbLog && t.tb != nil {
+	} else if t.tbLog {
 		t.tb.Helper()
 		t.tb.Logf(format, args...)
 	}
 }
 
-func (t *T) Log(args ...interface{}) {
+func (t *T) Log(args ...any) {
 	if t.rawLog != nil {
 		t.rawLog.Print(args...)
-	} else if t.tbLog && t.tb != nil {
+	} else if t.tbLog {
 		t.tb.Helper()
 		t.tb.Log(args...)
 	}
 }
 
-// Skipf is equivalent to Logf followed by SkipNow.
-func (t *T) Skipf(format string, args ...interface{}) {
-	if t.tbLog && t.tb != nil {
+// Skipf is equivalent to [T.Logf] followed by [T.SkipNow].
+func (t *T) Skipf(format string, args ...any) {
+	if t.tbLog {
 		t.tb.Helper()
 	}
 	t.Logf(format, args...)
 	t.skip(fmt.Sprintf(format, args...))
 }
 
-// Skip is equivalent to Log followed by SkipNow.
-func (t *T) Skip(args ...interface{}) {
-	if t.tbLog && t.tb != nil {
+// Skip is equivalent to [T.Log] followed by [T.SkipNow].
+func (t *T) Skip(args ...any) {
+	if t.tbLog {
 		t.tb.Helper()
 	}
 	t.Log(args...)
 	t.skip(fmt.Sprint(args...))
 }
 
-// SkipNow marks the current test case as invalid (except state machine
-// tests, where it marks current action as non-applicable instead).
+// SkipNow marks the current test case as invalid (except in [T.Repeat]
+// actions, where it marks current action as non-applicable instead).
 // If too many test cases are skipped, rapid will mark the test as failing
 // due to inability to generate enough valid test cases.
 //
-// Prefer Filter to SkipNow, and prefer generators that always produce
+// Prefer *Generator.Filter to SkipNow, and prefer generators that always produce
 // valid test cases to Filter.
 func (t *T) SkipNow() {
 	t.skip("(*T).SkipNow() called")
 }
 
-// Errorf is equivalent to Logf followed by Fail.
-func (t *T) Errorf(format string, args ...interface{}) {
-	if t.tbLog && t.tb != nil {
+// Errorf is equivalent to [T.Logf] followed by [T.Fail].
+func (t *T) Errorf(format string, args ...any) {
+	if t.tbLog {
 		t.tb.Helper()
 	}
 	t.Logf(format, args...)
 	t.fail(false, fmt.Sprintf(format, args...))
 }
 
-// Error is equivalent to Log followed by Fail.
-func (t *T) Error(args ...interface{}) {
-	if t.tbLog && t.tb != nil {
+// Error is equivalent to [T.Log] followed by [T.Fail].
+func (t *T) Error(args ...any) {
+	if t.tbLog {
 		t.tb.Helper()
 	}
 	t.Log(args...)
 	t.fail(false, fmt.Sprint(args...))
 }
 
-// Fatalf is equivalent to Logf followed by FailNow.
-func (t *T) Fatalf(format string, args ...interface{}) {
-	if t.tbLog && t.tb != nil {
+// Fatalf is equivalent to [T.Logf] followed by [T.FailNow].
+func (t *T) Fatalf(format string, args ...any) {
+	if t.tbLog {
 		t.tb.Helper()
 	}
 	t.Logf(format, args...)
 	t.fail(true, fmt.Sprintf(format, args...))
 }
 
-// Fatal is equivalent to Log followed by FailNow.
-func (t *T) Fatal(args ...interface{}) {
-	if t.tbLog && t.tb != nil {
+// Fatal is equivalent to [T.Log] followed by [T.FailNow].
+func (t *T) Fatal(args ...any) {
+	if t.tbLog {
 		t.tb.Helper()
 	}
 	t.Log(args...)
@@ -553,23 +657,5 @@ func (t *T) failOnError() {
 
 	if t.failed != "" {
 		panic(t.failed)
-	}
-}
-
-func assertCallable(fn reflect.Type, t reflect.Type, name string) {
-	assertf(fn.Kind() == reflect.Func, "%v should be a function, not %v", name, fn.Kind())
-	assertf(fn.NumIn() == 1, "%v should have 1 parameter, not %v", name, fn.NumIn())
-	assertf(fn.NumOut() == 1, "%v should have 1 output parameter, not %v", name, fn.NumOut())
-	assertf(t.AssignableTo(fn.In(0)), "parameter #0 (%v) of %v should be assignable from %v", fn.In(0), name, t)
-}
-
-func call(fn reflect.Value, arg reflect.Value) value {
-	r := fn.Call([]reflect.Value{arg})
-
-	if len(r) == 0 {
-		return nil
-	} else {
-		assert(len(r) == 1)
-		return r[0].Interface()
 	}
 }

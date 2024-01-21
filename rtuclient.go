@@ -261,7 +261,7 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	mb.startCloseTimer()
 
 	// Send the request
-	mb.logf("modbus: send % x\n", aduRequest)
+	mb.Debug("modbus: send % x\n", aduRequest)
 	if _, err = mb.port.Write(aduRequest); err != nil {
 		return
 	}
@@ -271,7 +271,7 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	time.Sleep(mb.calculateDelay(len(aduRequest) + bytesToRead))
 
 	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.port, time.Now().Add(mb.Config.Timeout))
-	mb.logf("modbus: recv % x\n", data[:])
+	mb.Debug("modbus: recv % x\n", data[:])
 	aduResponse = data
 	return
 }
