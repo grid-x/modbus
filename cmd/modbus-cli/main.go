@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"math"
 	"net/url"
@@ -96,7 +95,8 @@ func main() {
 		os.Exit(-1)
 	}
 	if err := handler.Connect(); err != nil {
-		log.Fatal(err)
+		logger.Error(err.Error())
+		os.Exit(-1)
 	}
 	defer handler.Close()
 
