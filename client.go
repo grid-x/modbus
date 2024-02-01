@@ -9,6 +9,8 @@ import (
 	"fmt"
 )
 
+// DataSizeError represents an error for invalid data-sizes i.e. for cases
+// where the data-size does not match the expectation.
 type DataSizeError struct {
 	Expected int
 	Actual   int
