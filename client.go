@@ -73,9 +73,11 @@ func (mb *client) ReadCoils(address, quantity uint16) (results []byte, err error
 	length := len(response.Data) - 1
 	if count != length {
 		err = &DataSizeError{Expected: count, Actual: length}
-		return
+		if length < count {
+			return
+		}
 	}
-	results = response.Data[1:]
+	results = response.Data[1 : count+1]
 	return
 }
 
@@ -107,9 +109,11 @@ func (mb *client) ReadDiscreteInputs(address, quantity uint16) (results []byte, 
 	length := len(response.Data) - 1
 	if count != length {
 		err = &DataSizeError{Expected: count, Actual: length}
-		return
+		if length < count {
+			return
+		}
 	}
-	results = response.Data[1:]
+	results = response.Data[1 : count+1]
 	return
 }
 
@@ -141,13 +145,15 @@ func (mb *client) ReadHoldingRegisters(address, quantity uint16) (results []byte
 	length := len(response.Data) - 1
 	if count != length {
 		err = &DataSizeError{Expected: count, Actual: length}
-		return
+		if length < count {
+			return
+		}
 	}
 	if count != 2*int(quantity) {
 		err = fmt.Errorf("modbus: response data size '%v' does not match request quantity '%v'", length, quantity)
 		return
 	}
-	results = response.Data[1:]
+	results = response.Data[1 : count+1]
 	return
 }
 
@@ -179,13 +185,15 @@ func (mb *client) ReadInputRegisters(address, quantity uint16) (results []byte, 
 	length := len(response.Data) - 1
 	if count != length {
 		err = &DataSizeError{Expected: count, Actual: length}
-		return
+		if length < count {
+			return
+		}
 	}
 	if count != 2*int(quantity) {
 		err = fmt.Errorf("modbus: response data size '%v' does not match request quantity '%v'", length, quantity)
 		return
 	}
-	results = response.Data[1:]
+	results = response.Data[1 : count+1]
 	return
 }
 
@@ -441,11 +449,14 @@ func (mb *client) ReadWriteMultipleRegisters(readAddress, readQuantity, writeAdd
 		return
 	}
 	count := int(response.Data[0])
-	if count != (len(response.Data) - 1) {
-		err = &DataSizeError{Expected: count, Actual: len(response.Data) - 1}
-		return
+	length := len(response.Data) - 1
+	if count != length {
+		err = &DataSizeError{Expected: count, Actual: length}
+		if length < count {
+			return
+		}
 	}
-	results = response.Data[1:]
+	results = response.Data[1 : count+1]
 	return
 }
 
@@ -475,11 +486,14 @@ func (mb *client) ReadFIFOQueue(address uint16) (results []byte, err error) {
 		return
 	}
 	count := int(binary.BigEndian.Uint16(response.Data))
-	if count != (len(response.Data) - 1) {
-		err = &DataSizeError{Expected: count, Actual: len(response.Data) - 1}
-		return
+	length := len(response.Data) - 1
+	if count != length {
+		err = &DataSizeError{Expected: count, Actual: length}
+		if length < count {
+			return
+		}
 	}
-	count = int(binary.BigEndian.Uint16(response.Data[2:]))
+	count = int(binary.BigEndian.Uint16(response.Data[2 : count+2]))
 	if count > 31 {
 		err = fmt.Errorf("modbus: fifo count '%v' is greater than expected '%v'", count, 31)
 		return
