@@ -3,6 +3,7 @@ package modbus
 import (
 	"bytes"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -10,11 +11,11 @@ import (
 type nopCloser struct {
 	io.ReadWriter
 
-	closed bool
+	closed atomic.Bool
 }
 
 func (n *nopCloser) Close() error {
-	n.closed = true
+	n.closed.Store(true)
 	return nil
 }
 
@@ -30,7 +31,9 @@ func TestSerialCloseIdle(t *testing.T) {
 	s.startCloseTimer()
 
 	time.Sleep(150 * time.Millisecond)
-	if !port.closed || s.port != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !port.closed.Load() || s.port != nil {
 		t.Fatalf("serial port is not closed when inactivity: %+v", port)
 	}
 }
