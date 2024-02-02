@@ -47,6 +47,7 @@ type cmdline struct {
 	checks     int
 	steps      int
 	failfile   string
+	nofailfile bool
 	seed       uint64
 	log        bool
 	verbose    bool
@@ -59,6 +60,7 @@ func init() {
 	flag.IntVar(&flags.checks, "rapid.checks", 100, "rapid: number of checks to perform")
 	flag.IntVar(&flags.steps, "rapid.steps", 100, "rapid: number of state machine steps to perform")
 	flag.StringVar(&flags.failfile, "rapid.failfile", "", "rapid: fail file to use to reproduce test failure")
+	flag.BoolVar(&flags.nofailfile, "rapid.nofailfile", false, "rapid: do not write fail files on test failures")
 	flag.Uint64Var(&flags.seed, "rapid.seed", 0, "rapid: PRNG seed to start with (0 to use a random one)")
 	flag.BoolVar(&flags.log, "rapid.log", false, "rapid: eager verbose output to stdout (to aid with unrecoverable test failures)")
 	flag.BoolVar(&flags.verbose, "rapid.v", false, "rapid: verbose output")
@@ -131,12 +133,12 @@ func checkTB(tb tb, prop func(*T)) {
 		repr := fmt.Sprintf("-rapid.seed=%d", seed)
 		if flags.failfile != "" && seed == 0 {
 			repr = fmt.Sprintf("-rapid.failfile=%q", flags.failfile)
-		} else {
+		} else if !flags.nofailfile {
 			failfile := failFileName(tb.Name())
 			out := captureTestOutput(tb, prop, buf)
-			err := saveFailFile(failfile, out, buf)
+			err := saveFailFile(failfile, rapidVersion, out, seed, buf)
 			if err == nil {
-				repr = fmt.Sprintf("-rapid.failfile=%q", failfile)
+				repr = fmt.Sprintf("-rapid.failfile=%q (or -rapid.seed=%d)", failfile, seed)
 			} else {
 				tb.Logf("[rapid] %v", err)
 			}
@@ -195,9 +197,13 @@ func doCheck(tb tb, failfile string, checks int, seed uint64, prop func(*T)) (in
 func checkFailFile(tb tb, failfile string, prop func(*T)) ([]uint64, *testError, *testError) {
 	tb.Helper()
 
-	buf, err := loadFailFile(failfile)
+	version, _, buf, err := loadFailFile(failfile)
 	if err != nil {
 		tb.Logf("[rapid] ignoring fail file: %v", err)
+		return nil, nil, nil
+	}
+	if version != rapidVersion {
+		tb.Logf("[rapid] ignoring fail file: version %q differs from rapid version %q", version, rapidVersion)
 		return nil, nil, nil
 	}
 

@@ -1,6 +1,6 @@
 module github.com/grid-x/modbus
 
-go 1.13
+go 1.21
 
 require (
 	github.com/google/go-cmp v0.5.6
