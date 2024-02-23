@@ -1,10 +1,25 @@
 package modbus
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"sync"
 )
+
+// ErrADURequestLength informs about a wrong ADU request length.
+type ErrADURequestLength int
+
+func (length ErrADURequestLength) Error() string {
+	return fmt.Sprintf("modbus: ADU request length '%d' must not be less than 2", length)
+}
+
+// ErrADUResponseLength informs about a wrong ADU request length.
+type ErrADUResponseLength int
+
+func (length ErrADUResponseLength) Error() string {
+	return fmt.Sprintf("modbus: ADU response length '%d' must not be less than 2", length)
+}
 
 // RTUOverUDPClientHandler implements Packager and Transporter interface.
 type RTUOverUDPClientHandler struct {
@@ -42,6 +57,12 @@ func (mb *rtuUDPTransporter) Send(aduRequest []byte) (aduResponse []byte, err er
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
+	// Check ADU request length
+	if len(aduRequest) < 2 {
+		err = ErrADURequestLength(len(aduRequest))
+		return
+	}
+
 	// Establish a new connection if not connected
 	if err = mb.connect(); err != nil {
 		return
@@ -65,6 +86,13 @@ func (mb *rtuUDPTransporter) Send(aduRequest []byte) (aduResponse []byte, err er
 	if err != nil {
 		return
 	}
+
+	// Check ADU response length
+	if len(data) < 2 {
+		err = ErrADUResponseLength(len(data))
+		return
+	}
+
 	// if the function is correct
 	if data[1] == function {
 		// we read the rest of the bytes
