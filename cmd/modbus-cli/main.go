@@ -472,7 +472,13 @@ func newHandler(o option) (modbus.ClientHandler, error) {
 		h.ProtocolRecoveryTimeout = o.tcp.protocolRecoveryTimeout
 		h.Logger = o.logger
 		return h, nil
+	case "udp":
+		h := modbus.NewRTUOverUDPClientHandler(u.Host)
+		h.SlaveID = byte(o.slaveID)
+		h.Logger = o.logger
+		return h, nil
 	}
+
 	return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 }
 

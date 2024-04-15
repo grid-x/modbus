@@ -21,6 +21,7 @@ Bit access:
 # Supported formats
 - TCP
 - Serial (RTU, ASCII)
+- UDP
 
 # Usage
 Basic usage:
@@ -81,6 +82,12 @@ For Modbus RTU, replace the address field and use the `rtu-` arguments in order 
 ```sh
 ./modbus-cli -address=rtu:///dev/ttyUSB0 -rtu-baudrate=57600 -rtu-stopbits=2 -rtu-parity=N -rtu-databits=8 ...
 ```
+
+For Modbus UDP, replace the address field with a UDP address.
+```sh
+./modbus-cli --address=udp://127.0.0.1:502 ...
+```
+
 ### Reading Registers
 
 Read 1 register and get raw result
