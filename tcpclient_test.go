@@ -83,6 +83,8 @@ func TestTCPTransporter(t *testing.T) {
 		t.Fatalf("unexpected response: %x", rsp)
 	}
 	time.Sleep(150 * time.Millisecond)
+	client.mu.Lock()
+	defer client.mu.Unlock()
 	if client.conn != nil {
 		t.Fatalf("connection is not closed: %+v", client.conn)
 	}
