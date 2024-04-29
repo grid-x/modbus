@@ -7,13 +7,10 @@
 package rapid
 
 import (
+	"hash/maphash"
 	"math"
 	"math/bits"
-	"sync/atomic"
-	"time"
 )
-
-var seedCounter uint32
 
 type bitStream interface {
 	drawBits(n int) uint64
@@ -26,7 +23,7 @@ func baseSeed() uint64 {
 		return flags.seed
 	}
 
-	return uint64(time.Now().UnixNano())<<32 + uint64(atomic.AddUint32(&seedCounter, 1))
+	return new(maphash.Hash).Sum64()
 }
 
 type randomBitStream struct {
@@ -125,7 +122,8 @@ func (rec *recordedBits) beginGroup(label string, standalone bool) int {
 }
 
 func (rec *recordedBits) endGroup(i int, discard bool) {
-	assertf((!rec.persist && rec.dataLen != i) || (rec.persist && len(rec.data) != rec.groups[i].begin), "group did not use any data from bitstream")
+	assertf(discard || (!rec.persist && rec.dataLen > i) || (rec.persist && len(rec.data) > rec.groups[i].begin),
+		"group did not use any data from bitstream; this is likely a result of Custom generator not calling any of the built-in generators")
 
 	if !rec.persist {
 		return

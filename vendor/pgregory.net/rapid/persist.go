@@ -9,7 +9,6 @@ package rapid
 import (
 	"bufio"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,7 +18,7 @@ import (
 )
 
 const (
-	rapidVersion = "v0.4.6"
+	rapidVersion = "v0.4.8"
 
 	persistDirMode     = 0775
 	failfileTmpPattern = ".rapid-failfile-tmp-*"
@@ -37,9 +36,17 @@ func kindaSafeFilename(f string) string {
 	return s.String()
 }
 
-func failFileName(testName string) string {
+func failFileName(testName string) (string, string) {
 	ts := time.Now().Format("20060102150405")
-	return fmt.Sprintf("%s-%s-%d.fail", kindaSafeFilename(testName), ts, os.Getpid())
+	fileName := fmt.Sprintf("%s-%s-%d.fail", kindaSafeFilename(testName), ts, os.Getpid())
+	dirName := filepath.Join("testdata", "rapid", kindaSafeFilename(testName))
+	return dirName, filepath.Join(dirName, fileName)
+}
+
+func failFilePattern(testName string) string {
+	fileName := fmt.Sprintf("%s-*.fail", kindaSafeFilename(testName))
+	dirName := filepath.Join("testdata", "rapid", kindaSafeFilename(testName))
+	return filepath.Join(dirName, fileName)
 }
 
 func saveFailFile(filename string, version string, output []byte, seed uint64, buf []uint64) error {
@@ -49,7 +56,7 @@ func saveFailFile(filename string, version string, output []byte, seed uint64, b
 		return fmt.Errorf("failed to create directory for fail file %q: %w", filename, err)
 	}
 
-	f, err := ioutil.TempFile(dir, failfileTmpPattern)
+	f, err := os.CreateTemp(dir, failfileTmpPattern)
 	if err != nil {
 		return fmt.Errorf("failed to create temporary file for fail file %q: %w", filename, err)
 	}

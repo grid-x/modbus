@@ -5,7 +5,7 @@
 package test
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -28,7 +28,7 @@ func TestRTUOverTCPClientAdvancedUsage(t *testing.T) {
 	handler := modbus.NewRTUOverTCPClientHandler(rtuOverTCPDevice)
 	handler.Timeout = 5 * time.Second
 	handler.SlaveID = 1
-	handler.Logger = log.New(os.Stdout, "rtu over tcp: ", log.LstdFlags)
+	handler.Logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	handler.Connect()
 	defer handler.Close()
 

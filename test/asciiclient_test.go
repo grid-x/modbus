@@ -5,7 +5,7 @@
 package test
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"testing"
 
@@ -30,7 +30,7 @@ func TestASCIIClientAdvancedUsage(t *testing.T) {
 	handler.Parity = "E"
 	handler.StopBits = 1
 	handler.SlaveID = 12
-	handler.Logger = log.New(os.Stdout, "ascii: ", log.LstdFlags)
+	handler.Logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	err := handler.Connect()
 	if err != nil {
 		t.Fatal(err)

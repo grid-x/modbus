@@ -6,11 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"log"
+	"log/slog"
 	"math"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -64,9 +64,11 @@ func main() {
 		return
 	}
 
-	logger := log.New(os.Stdout, "", 0)
+	logger := slog.Default()
 	if *register > math.MaxUint16 || *register < 0 {
-		logger.Fatalf("invalid register value: %d", *register)
+		intRegister := *register
+		logger.Error("invalid register value: " + strconv.Itoa(intRegister))
+		os.Exit(-1)
 	}
 
 	startReg := uint16(*register)
@@ -89,10 +91,12 @@ func main() {
 
 	handler, err := newHandler(opt)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Error(err.Error())
+		os.Exit(-1)
 	}
 	if err := handler.Connect(); err != nil {
-		log.Fatal(err)
+		logger.Error(err.Error())
+		os.Exit(-1)
 	}
 	defer handler.Close()
 
@@ -100,9 +104,10 @@ func main() {
 
 	result, err := exec(client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity)
 	if err != nil && strings.Contains(err.Error(), "crc") && *ignoreCRCError {
-		logger.Printf("ignoring crc error: %+v\n", err)
+		logger.Info("ignoring crc error: %+v\n", err)
 	} else if err != nil {
-		logger.Fatal(err)
+		logger.Error(err.Error())
+		os.Exit(-1)
 	}
 
 	var res string
@@ -116,16 +121,19 @@ func main() {
 	}
 
 	if err != nil {
-		logger.Fatal(err)
+		logger.Error(err.Error())
+		os.Exit(-1)
 	}
 
-	logger.Println(res)
+	logger.Info(res)
 
 	if *filename != "" {
 		if err := resultToFile([]byte(res), *filename); err != nil {
-			logger.Fatal(err)
+			logger.Error(err.Error())
+			os.Exit(-1)
 		}
-		logger.Printf("%s successfully written\n", *filename)
+		fName := *filename
+		logger.Info(fName + " successfully written\n")
 	}
 }
 
@@ -230,7 +238,7 @@ func convertToBytes(eType string, order binary.ByteOrder, forcedOrder string, va
 }
 
 func resultToFile(r []byte, filename string) error {
-	return ioutil.WriteFile(filename, r, 0644)
+	return os.WriteFile(filename, r, 0644)
 }
 
 func resultToRawString(r []byte, startReg int) (string, error) {
@@ -408,16 +416,12 @@ func resultToString(r []byte, order binary.ByteOrder, forcedOrder string, varTyp
 	return "", fmt.Errorf("unsupported datatype: %s", varType)
 }
 
-type logger interface {
-	Printf(format string, v ...interface{})
-}
-
 type option struct {
 	address string
 	slaveID int
 	timeout time.Duration
 
-	logger logger
+	logger *slog.Logger
 
 	rtu struct {
 		baudrate int
