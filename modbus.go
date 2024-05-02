@@ -8,6 +8,7 @@ Package modbus provides a client for MODBUS TCP and RTU/ASCII.
 package modbus
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -115,4 +116,16 @@ type Transporter interface {
 type Connector interface {
 	Connect() error
 	Close() error
+}
+
+// Logger is an interface to define custom loggers
+type Logger interface {
+	Debug(string, ...any)
+	DebugContext(context.Context, string, ...any)
+	Info(string, ...any)
+	InfoContext(context.Context, string, ...any)
+	Warn(string, ...any)
+	WarnContext(context.Context, string, ...any)
+	Error(string, ...any)
+	ErrorContext(context.Context, string, ...any)
 }

@@ -3,7 +3,6 @@ package modbus
 import (
 	"fmt"
 	"io"
-	logger "log/slog"
 	"net"
 	"sync"
 )
@@ -46,7 +45,7 @@ type rtuUDPTransporter struct {
 	// Connect string
 	Address string
 	// Transmission logger
-	Logger *logger.Logger
+	Logger Logger
 
 	// UDP connection
 	mu   sync.Mutex

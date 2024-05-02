@@ -9,7 +9,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -138,7 +137,7 @@ type tcpTransporter struct {
 	// Silent period after successful connection
 	ConnectDelay time.Duration
 	// Transmission logger
-	Logger *slog.Logger
+	Logger Logger
 
 	// TCP connection
 	mu           sync.Mutex

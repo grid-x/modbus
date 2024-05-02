@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -26,7 +25,7 @@ type serialPort struct {
 	// Serial port configuration.
 	serial.Config
 
-	Logger      *slog.Logger
+	Logger      Logger
 	IdleTimeout time.Duration
 
 	mu sync.Mutex
