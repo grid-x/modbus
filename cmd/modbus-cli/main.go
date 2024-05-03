@@ -421,7 +421,7 @@ type option struct {
 	slaveID int
 	timeout time.Duration
 
-	logger Logger
+	logger modbus.Logger
 
 	rtu struct {
 		baudrate int

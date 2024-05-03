@@ -11,7 +11,7 @@ import (
 
 // Logger is the interface to the required logging functions
 type Logger interface {
-	Printf(format string, v ...interface{})
+	Printf(format string, v ...any)
 }
 
 // DataSizeError represents an error for invalid data-sizes i.e. for cases
