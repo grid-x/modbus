@@ -16,6 +16,14 @@ const (
 	asciiDevice = "/dev/pts/2"
 )
 
+type debugAdapter struct {
+	*slog.Logger
+}
+
+func (log *debugAdapter) Printf(msg string, args ...any) {
+	log.Logger.Debug(msg, args...)
+}
+
 func TestASCIIClient(t *testing.T) {
 	// Diagslave does not support broadcast id.
 	handler := modbus.NewASCIIClientHandler(asciiDevice)
@@ -30,7 +38,7 @@ func TestASCIIClientAdvancedUsage(t *testing.T) {
 	handler.Parity = "E"
 	handler.StopBits = 1
 	handler.SlaveID = 12
-	handler.Logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	handler.Logger = &debugAdapter{slog.New(slog.NewJSONHandler(os.Stdout, nil))}
 	err := handler.Connect()
 	if err != nil {
 		t.Fatal(err)

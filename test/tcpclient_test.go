@@ -26,7 +26,7 @@ func TestTCPClientAdvancedUsage(t *testing.T) {
 	handler := modbus.NewTCPClientHandler(tcpDevice)
 	handler.Timeout = 5 * time.Second
 	handler.SlaveID = 1
-	handler.Logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	handler.Logger = &debugAdapter{slog.New(slog.NewJSONHandler(os.Stdout, nil))}
 	handler.Connect()
 	defer handler.Close()
 

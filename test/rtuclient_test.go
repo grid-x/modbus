@@ -30,7 +30,7 @@ func TestRTUClientAdvancedUsage(t *testing.T) {
 	handler.Parity = "E"
 	handler.StopBits = 1
 	handler.SlaveID = 11
-	handler.Logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	handler.Logger = &debugAdapter{slog.New(slog.NewJSONHandler(os.Stdout, nil))}
 	err := handler.Connect()
 	if err != nil {
 		t.Fatal(err)
