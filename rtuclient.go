@@ -45,22 +45,29 @@ const (
 // RTUClientHandler implements Packager and Transporter interface.
 type RTUClientHandler struct {
 	rtuPackager
-	rtuSerialTransporter
+	*rtuSerialTransporter
 }
 
 // NewRTUClientHandler allocates and initializes a RTUClientHandler.
 func NewRTUClientHandler(address string) *RTUClientHandler {
-	handler := &RTUClientHandler{}
-	handler.Address = address
-	handler.Timeout = serialTimeout
-	handler.IdleTimeout = serialIdleTimeout
-	return handler
+	return &RTUClientHandler{
+		rtuSerialTransporter: &rtuSerialTransporter{
+			serialPort: defaultSerialPort(address),
+		},
+	}
 }
 
 // RTUClient creates RTU client with default handler and given connect string.
 func RTUClient(address string) Client {
 	handler := NewRTUClientHandler(address)
 	return NewClient(handler)
+}
+
+// Clone creates a new client handler with the same underlying shared transport.
+func (mb *RTUClientHandler) Clone() *RTUClientHandler {
+	return &RTUClientHandler{
+		rtuSerialTransporter: mb.rtuSerialTransporter,
+	}
 }
 
 // rtuPackager implements Packager interface.

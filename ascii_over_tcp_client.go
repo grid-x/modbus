@@ -11,22 +11,29 @@ import (
 // ASCIIOverTCPClientHandler implements Packager and Transporter interface.
 type ASCIIOverTCPClientHandler struct {
 	asciiPackager
-	asciiTCPTransporter
+	*asciiTCPTransporter
 }
 
 // NewASCIIOverTCPClientHandler allocates and initializes a ASCIIOverTCPClientHandler.
 func NewASCIIOverTCPClientHandler(address string) *ASCIIOverTCPClientHandler {
-	handler := &ASCIIOverTCPClientHandler{}
-	handler.Address = address
-	handler.Timeout = tcpTimeout
-	handler.IdleTimeout = tcpIdleTimeout
-	return handler
+	return &ASCIIOverTCPClientHandler{
+		asciiTCPTransporter: &asciiTCPTransporter{
+			defaultTCPTransporter(address),
+		},
+	}
 }
 
 // ASCIIOverTCPClient creates ASCII over TCP client with default handler and given connect string.
 func ASCIIOverTCPClient(address string) Client {
 	handler := NewASCIIOverTCPClientHandler(address)
 	return NewClient(handler)
+}
+
+// Clone creates a new client handler with the same underlying shared transport.
+func (mb *ASCIIOverTCPClientHandler) Clone() *ASCIIOverTCPClientHandler {
+	return &ASCIIOverTCPClientHandler{
+		asciiTCPTransporter: mb.asciiTCPTransporter,
+	}
 }
 
 // asciiTCPTransporter implements Transporter interface.

@@ -25,22 +25,29 @@ var asciiStart = []string{":", ">"}
 // ASCIIClientHandler implements Packager and Transporter interface.
 type ASCIIClientHandler struct {
 	asciiPackager
-	asciiSerialTransporter
+	*asciiSerialTransporter
 }
 
 // NewASCIIClientHandler allocates and initializes a ASCIIClientHandler.
 func NewASCIIClientHandler(address string) *ASCIIClientHandler {
-	handler := &ASCIIClientHandler{}
-	handler.Address = address
-	handler.Timeout = serialTimeout
-	handler.IdleTimeout = serialIdleTimeout
-	return handler
+	return &ASCIIClientHandler{
+		asciiSerialTransporter: &asciiSerialTransporter{
+			serialPort: defaultSerialPort(address),
+		},
+	}
 }
 
 // ASCIIClient creates ASCII client with default handler and given connect string.
 func ASCIIClient(address string) Client {
 	handler := NewASCIIClientHandler(address)
 	return NewClient(handler)
+}
+
+// Clone creates a new client handler with the same underlying shared transport.
+func (mb *ASCIIClientHandler) Clone() *ASCIIClientHandler {
+	return &ASCIIClientHandler{
+		asciiSerialTransporter: mb.asciiSerialTransporter,
+	}
 }
 
 // asciiPackager implements Packager interface.

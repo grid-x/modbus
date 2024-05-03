@@ -12,22 +12,29 @@ import (
 // RTUOverTCPClientHandler implements Packager and Transporter interface.
 type RTUOverTCPClientHandler struct {
 	rtuPackager
-	rtuTCPTransporter
+	*rtuTCPTransporter
 }
 
 // NewRTUOverTCPClientHandler allocates and initializes a RTUOverTCPClientHandler.
 func NewRTUOverTCPClientHandler(address string) *RTUOverTCPClientHandler {
-	handler := &RTUOverTCPClientHandler{}
-	handler.Address = address
-	handler.Timeout = tcpTimeout
-	handler.IdleTimeout = tcpIdleTimeout
-	return handler
+	return &RTUOverTCPClientHandler{
+		rtuTCPTransporter: &rtuTCPTransporter{
+			defaultTCPTransporter(address),
+		},
+	}
 }
 
 // RTUOverTCPClient creates RTU over TCP client with default handler and given connect string.
 func RTUOverTCPClient(address string) Client {
 	handler := NewRTUOverTCPClientHandler(address)
 	return NewClient(handler)
+}
+
+// Clone creates a new client handler with the same underlying shared transport.
+func (mb *RTUOverTCPClientHandler) Clone() *RTUOverTCPClientHandler {
+	return &RTUOverTCPClientHandler{
+		rtuTCPTransporter: mb.rtuTCPTransporter,
+	}
 }
 
 // rtuTCPTransporter implements Transporter interface.
