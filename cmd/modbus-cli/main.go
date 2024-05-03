@@ -74,7 +74,7 @@ func main() {
 	startReg := uint16(*register)
 
 	if *logframe {
-		opt.logger = logger
+		opt.logger = &debugAdapter{logger}
 	}
 
 	var (

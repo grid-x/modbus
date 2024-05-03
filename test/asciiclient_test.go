@@ -16,14 +16,6 @@ const (
 	asciiDevice = "/dev/pts/2"
 )
 
-type debugAdapter struct {
-	*slog.Logger
-}
-
-func (log *debugAdapter) Printf(msg string, args ...any) {
-	log.Logger.Debug(msg, args...)
-}
-
 func TestASCIIClient(t *testing.T) {
 	// Diagslave does not support broadcast id.
 	handler := modbus.NewASCIIClientHandler(asciiDevice)
