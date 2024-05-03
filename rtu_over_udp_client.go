@@ -3,7 +3,6 @@ package modbus
 import (
 	"fmt"
 	"io"
-	logger "log/slog"
 	"net"
 	"sync"
 )
@@ -46,7 +45,7 @@ type rtuUDPTransporter struct {
 	// Connect string
 	Address string
 	// Transmission logger
-	Logger *logger.Logger
+	Logger Logger
 
 	// UDP connection
 	mu   sync.Mutex
@@ -121,7 +120,7 @@ func (mb *rtuUDPTransporter) Send(aduRequest []byte) (aduResponse []byte, err er
 
 func (mb *rtuUDPTransporter) logf(format string, v ...interface{}) {
 	if mb.Logger != nil {
-		mb.Logger.Info(format, v...)
+		mb.Logger.Printf(format, v...)
 	}
 }
 

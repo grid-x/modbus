@@ -181,7 +181,7 @@ func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, e
 	mb.startCloseTimer()
 
 	// Send the request
-	mb.Debug("modbus: send % x\n", aduRequest)
+	mb.logf("modbus: send % x\n", aduRequest)
 	if _, err = mb.port.Write(aduRequest); err != nil {
 		return
 	}
@@ -204,7 +204,7 @@ func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, e
 		}
 	}
 	aduResponse = data[:length]
-	mb.Debug("modbus: recv % x\n", aduResponse)
+	mb.logf("modbus: recv % x\n", aduResponse)
 	return
 }
 

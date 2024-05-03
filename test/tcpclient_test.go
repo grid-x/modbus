@@ -5,8 +5,7 @@
 package test
 
 import (
-	"log/slog"
-	"os"
+	"log"
 	"testing"
 	"time"
 
@@ -26,7 +25,7 @@ func TestTCPClientAdvancedUsage(t *testing.T) {
 	handler := modbus.NewTCPClientHandler(tcpDevice)
 	handler.Timeout = 5 * time.Second
 	handler.SlaveID = 1
-	handler.Logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	handler.Logger = log.Default()
 	handler.Connect()
 	defer handler.Close()
 

@@ -74,7 +74,7 @@ func main() {
 	startReg := uint16(*register)
 
 	if *logframe {
-		opt.logger = logger
+		opt.logger = &debugAdapter{logger}
 	}
 
 	var (
@@ -238,7 +238,7 @@ func convertToBytes(eType string, order binary.ByteOrder, forcedOrder string, va
 }
 
 func resultToFile(r []byte, filename string) error {
-	return os.WriteFile(filename, r, 0644)
+	return os.WriteFile(filename, r, 0o644)
 }
 
 func resultToRawString(r []byte, startReg int) (string, error) {
@@ -421,7 +421,7 @@ type option struct {
 	slaveID int
 	timeout time.Duration
 
-	logger *slog.Logger
+	logger modbus.Logger
 
 	rtu struct {
 		baudrate int

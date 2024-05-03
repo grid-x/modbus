@@ -5,10 +5,8 @@
 package modbus
 
 import (
-	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -26,7 +24,7 @@ type serialPort struct {
 	// Serial port configuration.
 	serial.Config
 
-	Logger      *slog.Logger
+	Logger      Logger
 	IdleTimeout time.Duration
 
 	mu sync.Mutex
@@ -71,39 +69,9 @@ func (mb *serialPort) close() (err error) {
 	return
 }
 
-func (mb *serialPort) Debug(format string, v ...interface{}) {
+func (mb *serialPort) logf(format string, v ...interface{}) {
 	if mb.Logger != nil {
-		mb.Logger.Debug(format, v...)
-	}
-}
-
-func (mb *serialPort) Info(format string, v ...interface{}) {
-	if mb.Logger != nil {
-		mb.Logger.Info(format, v...)
-	}
-}
-
-func (mb *serialPort) Error(format string, v ...interface{}) {
-	if mb.Logger != nil {
-		mb.Logger.Error(format, v...)
-	}
-}
-
-func (mb *serialPort) DebugContext(ctx context.Context, format string, v ...interface{}) {
-	if mb.Logger != nil {
-		mb.Logger.DebugContext(ctx, format, v...)
-	}
-}
-
-func (mb *serialPort) InfoContext(ctx context.Context, format string, v ...interface{}) {
-	if mb.Logger != nil {
-		mb.Logger.InfoContext(ctx, format, v...)
-	}
-}
-
-func (mb *serialPort) ErrorContext(ctx context.Context, format string, v ...interface{}) {
-	if mb.Logger != nil {
-		mb.Logger.ErrorContext(ctx, format, v...)
+		mb.Logger.Printf(format, v...)
 	}
 }
 
@@ -128,7 +96,7 @@ func (mb *serialPort) closeIdle() {
 	}
 
 	if idle := time.Since(mb.lastActivity); idle >= mb.IdleTimeout {
-		mb.Debug("modbus: closing connection due to idle timeout: %v", idle)
+		mb.logf("modbus: closing connection due to idle timeout: %v", idle)
 		mb.close()
 	}
 }
