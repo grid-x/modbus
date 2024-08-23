@@ -203,6 +203,22 @@ func convertToBytes(eType string, order binary.ByteOrder, forcedOrder string, va
 	var buf []byte
 	var err error
 	switch eType {
+	case "int16":
+		max := float64(math.MaxInt16)
+		min := float64(math.MinInt16)
+		if val > max || val < min {
+			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
+			break
+		}
+		buf = w.ToInt16(int16(val))
+	case "int32":
+		max := float64(math.MaxInt32)
+		min := float64(math.MinInt32)
+		if val > max || val < min {
+			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
+			break
+		}
+		buf = w.ToInt32(int32(val))
 	case "uint16":
 		max := float64(math.MaxUint16)
 		if val > max || val < 0 {
@@ -494,6 +510,19 @@ type writer struct {
 	order binary.ByteOrder
 }
 
+func (w *writer) ToInt16(v int16) []byte {
+	var buf bytes.Buffer
+	w.to(&buf, v)
+	b, _ := io.ReadAll(&buf)
+	return b
+}
+
+func (w *writer) ToInt32(v int32) []byte {
+	var buf bytes.Buffer
+	w.to(&buf, v)
+	b, _ := io.ReadAll(&buf)
+	return b
+}
 func (w *writer) ToUint16(v uint16) []byte {
 	var buf bytes.Buffer
 	w.to(&buf, v)

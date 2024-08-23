@@ -19,6 +19,93 @@ func TestConvertBytes(t *testing.T) {
 	}
 
 	tests := []testCase{
+		// Int 16
+		{
+			name:     "convert int16 - be - valid value",
+			eType:    "int16",
+			order:    binary.BigEndian,
+			val:      42,
+			expected: []byte{0x00, 0x2A},
+		},
+		{
+			name:     "convert int16 - le - valid value",
+			eType:    "int16",
+			order:    binary.LittleEndian,
+			val:      42,
+			expected: []byte{0x2A, 0x00},
+		},
+		{
+			name:     "convert int16 - be - negative value",
+			eType:    "int16",
+			order:    binary.BigEndian,
+			val:      -42,
+			expected: []byte{0xFF, 0xD6},
+		},
+		{
+			name:     "convert int16 - le - negative value",
+			eType:    "int16",
+			order:    binary.LittleEndian,
+			val:      -42,
+			expected: []byte{0xD6, 0xFF},
+		},
+		{
+			name:        "convert int16 - overflow positive value",
+			eType:       "int16",
+			order:       binary.BigEndian,
+			val:         math.MaxUint16 + 1,
+			expectError: true,
+		},
+		{
+			name:        "convert int16 - overflow negative value",
+			eType:       "int16",
+			order:       binary.BigEndian,
+			val:         math.MinInt16 - 1,
+			expectError: true,
+		},
+		// Int32
+		{
+			name:     "convert int32 - be - valid value",
+			eType:    "int32",
+			order:    binary.BigEndian,
+			val:      42,
+			expected: []byte{0x00, 0x00, 0x00, 0x2A},
+		},
+		{
+			name:     "convert int32 - le - valid value",
+			eType:    "int32",
+			order:    binary.LittleEndian,
+			val:      42,
+			expected: []byte{0x2A, 0x00, 0x00, 0x00},
+		},
+		{
+			name:     "convert int32 - be - negative value",
+			eType:    "int32",
+			order:    binary.BigEndian,
+			val:      -42,
+			expected: []byte{0xFF, 0xFF, 0xFF, 0xD6},
+		},
+		{
+			name:     "convert int32 - le - negative value",
+			eType:    "int32",
+			order:    binary.LittleEndian,
+			val:      -42,
+			expected: []byte{0xD6, 0xFF, 0xFF, 0xFF},
+		},
+		{
+			name:        "convert int32 - overflow positive value",
+			eType:       "int32",
+			order:       binary.BigEndian,
+			val:         math.MaxUint32 + 1,
+			expectError: true,
+		},
+		{
+			name:        "convert int32 - overflow negative value",
+			eType:       "int32",
+			order:       binary.BigEndian,
+			val:         math.MinInt32 - 1,
+			expectError: true,
+		},
+
 		// UInt 16
 		{
 			name:     "convert uint16 - be - valid value",
@@ -150,7 +237,6 @@ func TestConvertBytes(t *testing.T) {
 			if !cmp.Equal(bytes, tc.expected) {
 				t.Errorf("expected %v but got %v. Diff: %v", tc.expected, bytes, cmp.Diff(tc.expected, bytes))
 			}
-
 		})
 	}
 }
