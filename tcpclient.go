@@ -36,16 +36,16 @@ func (length ErrTCPHeaderLength) Error() string {
 // TCPClientHandler implements Packager and Transporter interface.
 type TCPClientHandler struct {
 	tcpPackager
-	tcpTransporter
+	*tcpTransporter
 }
 
 // NewTCPClientHandler allocates a new TCPClientHandler.
 func NewTCPClientHandler(address string) *TCPClientHandler {
-	h := &TCPClientHandler{}
-	h.Address = address
-	h.Timeout = tcpTimeout
-	h.IdleTimeout = tcpIdleTimeout
-	return h
+	transport := defaultTCPTransporter(address)
+	return &TCPClientHandler{
+		tcpPackager:    tcpPackager{transactionID: &transport.transactionID},
+		tcpTransporter: &transport,
+	}
 }
 
 // TCPClient creates TCP client with default handler and given connect string.
@@ -54,10 +54,18 @@ func TCPClient(address string) Client {
 	return NewClient(handler)
 }
 
+// Clone creates a new client handler with the same underlying shared transport.
+func (mb *TCPClientHandler) Clone() *TCPClientHandler {
+	return &TCPClientHandler{
+		tcpPackager:    tcpPackager{transactionID: &mb.tcpTransporter.transactionID},
+		tcpTransporter: mb.tcpTransporter,
+	}
+}
+
 // tcpPackager implements Packager interface.
 type tcpPackager struct {
 	// For synchronization between messages of server & client
-	transactionID uint32
+	transactionID *uint32
 	// Broadcast address is 0
 	SlaveID byte
 }
@@ -79,7 +87,7 @@ func (mb *tcpPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	adu = make([]byte, tcpHeaderSize+1+len(pdu.Data))
 
 	// Transaction identifier
-	transactionID := atomic.AddUint32(&mb.transactionID, 1)
+	transactionID := atomic.AddUint32(mb.transactionID, 1)
 	binary.BigEndian.PutUint16(adu, uint16(transactionID))
 	// Protocol identifier
 	binary.BigEndian.PutUint16(adu[2:], tcpProtocolIdentifier)
@@ -146,6 +154,18 @@ type tcpTransporter struct {
 
 	lastAttemptedTransactionID  uint16
 	lastSuccessfulTransactionID uint16
+
+	// For synchronization between messages of server & client
+	transactionID uint32
+}
+
+// defaultTCPTransporter creates a new tcpTransporter with default values.
+func defaultTCPTransporter(address string) tcpTransporter {
+	return tcpTransporter{
+		Address:     address,
+		Timeout:     tcpTimeout,
+		IdleTimeout: tcpIdleTimeout,
+	}
 }
 
 // helper value to signify what to do in Send

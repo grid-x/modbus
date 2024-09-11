@@ -1,6 +1,8 @@
 # go modbus
 Fault-tolerant, fail-fast implementation of Modbus protocol in Go.
 
+**Purpose:** this fork aims to enable modbus for concurrent usage. As such, it implements https://github.com/grid-x/modbus/pull/70.
+
 # Supported functions
 
 Bit access:
