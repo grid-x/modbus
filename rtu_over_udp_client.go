@@ -86,8 +86,7 @@ func (mb *rtuUDPTransporter) Send(aduRequest []byte) (aduResponse []byte, err er
 	functionFail := aduRequest[1] & 0x80
 	bytesToRead := calculateResponseLength(aduRequest)
 
-	var n int
-	var n1 int
+	var n, n1 int
 	var data [rtuMaxSize]byte
 	// We first read the minimum length and then read either the full package
 	// or the error package, depending on the error status (byte 2 of the response)
