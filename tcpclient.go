@@ -48,24 +48,24 @@ type TCPClientHandler struct {
 // NewTCPClientHandler allocates a new TCPClientHandler.
 func NewTCPClientHandler(address string) *TCPClientHandler {
 	transport := defaultTCPTransporter(address)
-	h := &TCPClientHandler{
+	return &TCPClientHandler{
+		tcpPackager:    tcpPackager{transactionID: &transport.transactionID},
 		tcpTransporter: &transport,
 	}
-	return h
 }
 
 // Clone creates a new client handler with the same underlying shared transport.
 func (mb *TCPClientHandler) Clone() *TCPClientHandler {
-	h := &TCPClientHandler{
+	return &TCPClientHandler{
+		tcpPackager:    tcpPackager{transactionID: &mb.tcpTransporter.transactionID},
 		tcpTransporter: mb.tcpTransporter,
 	}
-	return h
 }
 
 // tcpPackager implements Packager interface.
 type tcpPackager struct {
 	// For synchronization between messages of server & client
-	transactionID uint32
+	transactionID *uint32
 	// Broadcast address is 0
 	SlaveID byte
 }
@@ -87,7 +87,7 @@ func (mb *tcpPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	adu = make([]byte, tcpHeaderSize+1+len(pdu.Data))
 
 	// Transaction identifier
-	transactionID := atomic.AddUint32(&mb.transactionID, 1)
+	transactionID := atomic.AddUint32(mb.transactionID, 1)
 	binary.BigEndian.PutUint16(adu, uint16(transactionID))
 	// Protocol identifier
 	binary.BigEndian.PutUint16(adu[2:], tcpProtocolIdentifier)
@@ -154,6 +154,9 @@ type tcpTransporter struct {
 
 	lastAttemptedTransactionID  uint16
 	lastSuccessfulTransactionID uint16
+
+	// For synchronization between messages of server & client
+	transactionID uint32
 }
 
 // defaultTCPTransporter creates a new tcpTransporter with default values.
