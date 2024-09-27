@@ -6,6 +6,7 @@ package modbus
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -153,6 +154,11 @@ func (e *InvalidLengthError) Error() string {
 
 // readIncrementally reads incrementally
 func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Time) ([]byte, error) {
+	if r == nil {
+		return nil, fmt.Errorf("reader is nil")
+	}
+
+	buf := make([]byte, 1)
 	data := make([]byte, rtuMaxSize)
 
 	state := stateSlaveID
@@ -161,16 +167,13 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Ti
 
 	for {
 		if time.Now().After(deadline) { // Possible that serialport may spew data
-			return nil, fmt.Errorf("failed to read from serial port within deadline")
+			return nil, errors.New("failed to read from serial port within deadline")
 		}
-		if r == nil {
-			return nil, fmt.Errorf("reader is nil")
-		}
-		buf := make([]byte, 1)
-		_, err := io.ReadAtLeast(r, buf, 1)
-		if err != nil {
+
+		if _, err := io.ReadAtLeast(r, buf, 1); err != nil {
 			return nil, err
 		}
+
 		switch state {
 		// expecting slaveID
 		case stateSlaveID:
