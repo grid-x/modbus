@@ -152,25 +152,33 @@ func (e *InvalidLengthError) Error() string {
 }
 
 // readIncrementally reads incrementally
-func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Time) ([]byte, error) {
+func readIncrementally(slaveID, functionCode byte, r io.Reader, delay time.Duration) ([]byte, error) {
+	if r == nil {
+		return nil, fmt.Errorf("reader is nil")
+	}
+
+	buf := make([]byte, 1)
 	data := make([]byte, rtuMaxSize)
 
 	state := stateSlaveID
 	var length, toRead byte
 	var n, crcCount int
+	var deadline time.Time
 
 	for {
-		if time.Now().After(deadline) { // Possible that serialport may spew data
+		if !deadline.IsZero() && time.Now().After(deadline) { // Possible that serialport may spew data
 			return nil, fmt.Errorf("failed to read from serial port within deadline")
 		}
-		if r == nil {
-			return nil, fmt.Errorf("reader is nil")
-		}
-		buf := make([]byte, 1)
-		_, err := io.ReadAtLeast(r, buf, 1)
-		if err != nil {
+
+		if _, err := io.ReadAtLeast(r, buf, 1); err != nil {
 			return nil, err
 		}
+
+		// after response has started remaining bytes MUST be read within maximum message duration
+		if delay > 0 {
+			deadline = time.Now().Add(delay)
+		}
+
 		switch state {
 		// expecting slaveID
 		case stateSlaveID:
@@ -256,6 +264,11 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	if err = mb.connect(); err != nil {
 		return
 	}
+
+	// Wait for previous frame delay to elapse
+	time.Sleep(time.Until(mb.lastActivity.Add(2 * mb.frameDelay())))
+	defer func() { mb.lastActivity = time.Now() }()
+
 	// Start the timer to close when idle
 	mb.lastActivity = time.Now()
 	mb.startCloseTimer()
@@ -265,30 +278,33 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	if _, err = mb.port.Write(aduRequest); err != nil {
 		return
 	}
-	// function := aduRequest[1]
-	// functionFail := aduRequest[1] & 0x80
-	bytesToRead := calculateResponseLength(aduRequest)
-	time.Sleep(mb.calculateDelay(len(aduRequest) + bytesToRead))
 
-	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.port, time.Now().Add(mb.Config.Timeout))
+	// Wait for request to be sent
+	time.Sleep(time.Duration(len(aduRequest))*mb.charDuration() + mb.frameDelay())
+
+	// Response is allowed to take character duration plus 1.5 characters gap (2.5 = 5/2 integer division)
+	responseDuration := time.Duration(calculateResponseLength(aduRequest)) * mb.charDuration() * 5 / 2
+	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.port, responseDuration)
 	mb.logf("modbus: recv % x\n", data[:])
 	aduResponse = data
 	return
 }
 
-// calculateDelay roughly calculates time needed for the next frame.
-// See MODBUS over Serial Line - Specification and Implementation Guide (page 13).
-func (mb *rtuSerialTransporter) calculateDelay(chars int) time.Duration {
-	var characterDelay, frameDelay int // us
+// charDuration returns the minimum transmission duration of a character.
+func (mb *rtuSerialTransporter) charDuration() time.Duration {
+	return time.Duration(11000000/mb.BaudRate) * time.Microsecond
+}
 
+// frameDelay returns the required minimum delay at the start and and the end of each frame.
+// See MODBUS over Serial Line - Specification and Implementation Guide (page 13).
+func (mb *rtuSerialTransporter) frameDelay() time.Duration {
+	var fd int // µs
 	if mb.BaudRate <= 0 || mb.BaudRate > 19200 {
-		characterDelay = 750
-		frameDelay = 1750
+		fd = 1750
 	} else {
-		characterDelay = 15000000 / mb.BaudRate
-		frameDelay = 35000000 / mb.BaudRate
+		fd = 38500000 / mb.BaudRate
 	}
-	return time.Duration(characterDelay*chars+frameDelay) * time.Microsecond
+	return time.Duration(fd) * time.Microsecond
 }
 
 func calculateResponseLength(adu []byte) int {
