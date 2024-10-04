@@ -181,14 +181,14 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader, delay time.Durat
 			return nil, err
 		}
 
-		// after response has started remaining bytes MUST be read within maximum message duration
-		if delay > 0 {
-			deadline = time.Now().Add(delay)
-		}
-
 		switch state {
 		// expecting slaveID
 		case stateSlaveID:
+			// after response has started remaining bytes MUST be read within maximum message duration
+			if delay > 0 {
+				deadline = time.Now().Add(delay)
+			}
+
 			// read slaveID
 			if buf[0] == slaveID {
 				state = stateFunctionCode
