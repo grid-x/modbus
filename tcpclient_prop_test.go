@@ -9,8 +9,9 @@ import (
 
 func TestTCPEncodeDecode(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
+		transactionID := rapid.Uint32().Draw(t, "transactionID")
 		packager := &tcpPackager{
-			transactionID: rapid.Uint32().Draw(t, "transactionID"),
+			transactionID: &transactionID,
 			SlaveID:       rapid.Byte().Draw(t, "SlaveID"),
 		}
 
