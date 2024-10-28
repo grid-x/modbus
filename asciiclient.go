@@ -45,10 +45,9 @@ func ASCIIClient(address string) Client {
 
 // Clone creates a new client handler with the same underlying shared transport.
 func (mb *ASCIIClientHandler) Clone() *ASCIIClientHandler {
-	h := &ASCIIClientHandler{
+	return &ASCIIClientHandler{
 		asciiSerialTransporter: mb.asciiSerialTransporter,
 	}
-	return h
 }
 
 // asciiPackager implements Packager interface.

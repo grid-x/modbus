@@ -33,12 +33,6 @@ func (length ErrTCPHeaderLength) Error() string {
 		length, tcpMaxLength-tcpHeaderSize+1)
 }
 
-// TCPClient creates TCP client with default handler and given connect string.
-func TCPClient(address string) Client {
-	handler := NewTCPClientHandler(address)
-	return NewClient(handler)
-}
-
 // TCPClientHandler implements Packager and Transporter interface.
 type TCPClientHandler struct {
 	tcpPackager
@@ -52,6 +46,12 @@ func NewTCPClientHandler(address string) *TCPClientHandler {
 		tcpPackager:    tcpPackager{transactionID: &transport.transactionID},
 		tcpTransporter: &transport,
 	}
+}
+
+// TCPClient creates TCP client with default handler and given connect string.
+func TCPClient(address string) Client {
+	handler := NewTCPClientHandler(address)
+	return NewClient(handler)
 }
 
 // Clone creates a new client handler with the same underlying shared transport.

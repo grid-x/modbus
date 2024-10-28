@@ -66,10 +66,9 @@ func RTUClient(address string) Client {
 
 // Clone creates a new client handler with the same underlying shared transport.
 func (mb *RTUClientHandler) Clone() *RTUClientHandler {
-	h := &RTUClientHandler{
+	return &RTUClientHandler{
 		rtuSerialTransporter: mb.rtuSerialTransporter,
 	}
-	return h
 }
 
 // rtuPackager implements Packager interface.
