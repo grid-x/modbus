@@ -41,7 +41,7 @@ func TestTCPDecoding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if 3 != pdu.FunctionCode {
+	if pdu.FunctionCode != 3 {
 		t.Fatalf("Function code: expected %v, actual %v", 3, pdu.FunctionCode)
 	}
 	expected := []byte{0, 120, 0, 3}
@@ -84,6 +84,8 @@ func TestTCPTransporter(t *testing.T) {
 		t.Fatalf("unexpected response: %x", rsp)
 	}
 	time.Sleep(150 * time.Millisecond)
+	client.mu.Lock()
+	defer client.mu.Unlock()
 	if client.conn != nil {
 		t.Fatalf("connection is not closed: %+v", client.conn)
 	}
@@ -154,17 +156,17 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 	handler.Timeout = 1 * time.Second
 	handler.ProtocolRecoveryTimeout = 50 * time.Millisecond
 	client := NewClient(handler)
-	resp, err := client.ReadInputRegisters(0, 1)
+	_, err = client.ReadInputRegisters(0, 1)
 	opError, ok := err.(*net.OpError)
 	if !ok || !opError.Timeout() {
 		t.Fatalf("expected timeout error, got %q", err)
 	}
-	resp, err = client.ReadInputRegisters(0, 1)
+	_, err = client.ReadInputRegisters(0, 1)
 	opError, ok = err.(*net.OpError)
 	if !ok || !opError.Timeout() {
 		t.Fatalf("expected timeout error, got %q", err)
 	}
-	resp, err = client.ReadInputRegisters(0, 1)
+	resp, err := client.ReadInputRegisters(0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

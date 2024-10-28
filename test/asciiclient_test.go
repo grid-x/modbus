@@ -6,7 +6,6 @@ package test
 
 import (
 	"log"
-	"os"
 	"testing"
 
 	"github.com/grid-x/modbus"
@@ -30,7 +29,7 @@ func TestASCIIClientAdvancedUsage(t *testing.T) {
 	handler.Parity = "E"
 	handler.StopBits = 1
 	handler.SlaveID = 12
-	handler.Logger = log.New(os.Stdout, "ascii: ", log.LstdFlags)
+	handler.Logger = log.Default()
 	err := handler.Connect()
 	if err != nil {
 		t.Fatal(err)

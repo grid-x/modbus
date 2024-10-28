@@ -13,7 +13,7 @@ func TestCRC(t *testing.T) {
 	crc.reset()
 	crc.pushBytes([]byte{0x02, 0x07})
 
-	if 0x1241 != crc.value() {
+	if crc.value() != 0x1241 {
 		t.Fatalf("crc expected %v, actual %v", 0x1241, crc.value())
 	}
 }

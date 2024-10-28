@@ -16,8 +16,8 @@ func TestTCPEncodeDecode(t *testing.T) {
 		}
 
 		pdu := &ProtocolDataUnit{
-			FunctionCode: rapid.Byte().Draw(t, "FunctionCode").(byte),
-			Data:         rapid.SliceOf(rapid.Byte()).Draw(t, "Data").([]byte),
+			FunctionCode: rapid.Byte().Draw(t, "FunctionCode"),
+			Data:         rapid.SliceOf(rapid.Byte()).Draw(t, "Data"),
 		}
 
 		raw, err := packager.Encode(pdu)

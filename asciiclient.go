@@ -22,12 +22,6 @@ const (
 // Modbus ASCII defines ':' but in the field often '>' is seen.
 var asciiStart = []string{":", ">"}
 
-// ASCIIClient creates ASCII client with default handler and given connect string.
-func ASCIIClient(address string) Client {
-	handler := NewASCIIClientHandler(address)
-	return NewClient(handler)
-}
-
 // ASCIIClientHandler implements Packager and Transporter interface.
 type ASCIIClientHandler struct {
 	asciiPackager
@@ -36,13 +30,17 @@ type ASCIIClientHandler struct {
 
 // NewASCIIClientHandler allocates and initializes a ASCIIClientHandler.
 func NewASCIIClientHandler(address string) *ASCIIClientHandler {
-	handler := &ASCIIClientHandler{
+	return &ASCIIClientHandler{
 		asciiSerialTransporter: &asciiSerialTransporter{
 			serialPort: defaultSerialPort(address),
 		},
 	}
-	handler.serialPort.Logger = handler // expose the logger
-	return handler
+}
+
+// ASCIIClient creates ASCII client with default handler and given connect string.
+func ASCIIClient(address string) Client {
+	handler := NewASCIIClientHandler(address)
+	return NewClient(handler)
 }
 
 // Clone creates a new client handler with the same underlying shared transport.
@@ -176,29 +174,22 @@ func (mb *asciiPackager) Decode(adu []byte) (pdu *ProtocolDataUnit, err error) {
 // asciiSerialTransporter implements Transporter interface.
 type asciiSerialTransporter struct {
 	serialPort
-	Logger logger
-}
-
-func (mb *asciiSerialTransporter) Printf(format string, v ...interface{}) {
-	if mb.Logger != nil {
-		mb.Logger.Printf(format, v...)
-	}
 }
 
 func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
-	mb.serialPort.mu.Lock()
-	defer mb.serialPort.mu.Unlock()
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
 
 	// Make sure port is connected
-	if err = mb.serialPort.connect(); err != nil {
+	if err = mb.connect(); err != nil {
 		return
 	}
 	// Start the timer to close when idle
-	mb.serialPort.lastActivity = time.Now()
-	mb.serialPort.startCloseTimer()
+	mb.lastActivity = time.Now()
+	mb.startCloseTimer()
 
 	// Send the request
-	mb.serialPort.logf("modbus: send % x\n", aduRequest)
+	mb.logf("modbus: send % x\n", aduRequest)
 	if _, err = mb.port.Write(aduRequest); err != nil {
 		return
 	}
@@ -221,7 +212,7 @@ func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, e
 		}
 	}
 	aduResponse = data[:length]
-	mb.serialPort.logf("modbus: recv % x\n", aduResponse)
+	mb.logf("modbus: recv % x\n", aduResponse)
 	return
 }
 
@@ -240,7 +231,7 @@ func writeHex(buf *bytes.Buffer, value []byte) (err error) {
 	return
 }
 
-// readHex decodes hexa string to byte, e.g. "8C" => 0x8C.
+// readHex decodes hex string to byte, e.g. "8C" => 0x8C.
 func readHex(data []byte) (value byte, err error) {
 	var dst [1]byte
 	if _, err = hex.Decode(dst[:], data[0:2]); err != nil {

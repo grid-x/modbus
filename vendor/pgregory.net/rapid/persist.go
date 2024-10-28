@@ -9,7 +9,6 @@ package rapid
 import (
 	"bufio"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,6 +18,8 @@ import (
 )
 
 const (
+	rapidVersion = "v0.4.8"
+
 	persistDirMode     = 0775
 	failfileTmpPattern = ".rapid-failfile-tmp-*"
 )
@@ -35,19 +36,27 @@ func kindaSafeFilename(f string) string {
 	return s.String()
 }
 
-func failFileName(testName string) string {
+func failFileName(testName string) (string, string) {
 	ts := time.Now().Format("20060102150405")
-	return fmt.Sprintf("%s-%s-%d.fail", kindaSafeFilename(testName), ts, os.Getpid())
+	fileName := fmt.Sprintf("%s-%s-%d.fail", kindaSafeFilename(testName), ts, os.Getpid())
+	dirName := filepath.Join("testdata", "rapid", kindaSafeFilename(testName))
+	return dirName, filepath.Join(dirName, fileName)
 }
 
-func saveFailFile(filename string, output []byte, buf []uint64) error {
+func failFilePattern(testName string) string {
+	fileName := fmt.Sprintf("%s-*.fail", kindaSafeFilename(testName))
+	dirName := filepath.Join("testdata", "rapid", kindaSafeFilename(testName))
+	return filepath.Join(dirName, fileName)
+}
+
+func saveFailFile(filename string, version string, output []byte, seed uint64, buf []uint64) error {
 	dir := filepath.Dir(filename)
 	err := os.MkdirAll(dir, persistDirMode)
 	if err != nil {
 		return fmt.Errorf("failed to create directory for fail file %q: %w", filename, err)
 	}
 
-	f, err := ioutil.TempFile(dir, failfileTmpPattern)
+	f, err := os.CreateTemp(dir, failfileTmpPattern)
 	if err != nil {
 		return fmt.Errorf("failed to create temporary file for fail file %q: %w", filename, err)
 	}
@@ -62,12 +71,12 @@ func saveFailFile(filename string, output []byte, buf []uint64) error {
 		}
 	}
 
-	var bs []string
+	bs := []string{fmt.Sprintf("%v#%v", version, seed)}
 	for _, u := range buf {
 		bs = append(bs, fmt.Sprintf("0x%x", u))
 	}
 
-	_, err = f.WriteString(strings.Join(bs, " "))
+	_, err = f.WriteString(strings.Join(bs, "\n"))
 	if err != nil {
 		return fmt.Errorf("failed to write data to fail file %q: %w", filename, err)
 	}
@@ -81,35 +90,47 @@ func saveFailFile(filename string, output []byte, buf []uint64) error {
 	return nil
 }
 
-func loadFailFile(filename string) ([]uint64, error) {
+func loadFailFile(filename string) (string, uint64, []uint64, error) {
 	f, err := os.Open(filename)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open fail file: %w", err)
+		return "", 0, nil, fmt.Errorf("failed to open fail file: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
-	var data string
+	var data []string
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		s := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(s, "#") || s == "" {
 			continue
 		}
-		data = s
+		data = append(data, s)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to load fail file %q: %w", filename, err)
+		return "", 0, nil, fmt.Errorf("failed to load fail file %q: %w", filename, err)
+	}
+
+	if len(data) == 0 {
+		return "", 0, nil, fmt.Errorf("no data in fail file %q", filename)
+	}
+
+	split := strings.Split(data[0], "#")
+	if len(split) != 2 {
+		return "", 0, nil, fmt.Errorf("invalid version/seed field %q in %q", data[0], filename)
+	}
+	seed, err := strconv.ParseUint(split[1], 10, 64)
+	if err != nil {
+		return "", 0, nil, fmt.Errorf("invalid seed %q in %q", split[1], filename)
 	}
 
 	var buf []uint64
-	fields := strings.Fields(data)
-	for _, b := range fields {
+	for _, b := range data[1:] {
 		u, err := strconv.ParseUint(b, 0, 64)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load fail file %q: %w", filename, err)
+			return "", 0, nil, fmt.Errorf("failed to load fail file %q: %w", filename, err)
 		}
 		buf = append(buf, u)
 	}
 
-	return buf, nil
+	return split[0], seed, buf, nil
 }

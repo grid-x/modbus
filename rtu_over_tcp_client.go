@@ -57,13 +57,12 @@ func (mb *rtuTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err er
 	// Set timer to close when idle
 	mb.lastActivity = time.Now()
 	mb.startCloseTimer()
+
 	// Set write and read timeout
-	var timeout time.Time
 	if mb.Timeout > 0 {
-		timeout = mb.lastActivity.Add(mb.Timeout)
-	}
-	if err = mb.conn.SetDeadline(timeout); err != nil {
-		return
+		if err = mb.conn.SetDeadline(mb.lastActivity.Add(mb.Timeout)); err != nil {
+			return
+		}
 	}
 
 	// Send the request
@@ -75,18 +74,17 @@ func (mb *rtuTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err er
 	functionFail := aduRequest[1] & 0x80
 	bytesToRead := calculateResponseLength(aduRequest)
 
-	var n int
-	var n1 int
+	var n, n1 int
 	var data [rtuMaxSize]byte
-	//We first read the minimum length and then read either the full package
-	//or the error package, depending on the error status (byte 2 of the response)
+	// We first read the minimum length and then read either the full package
+	// or the error package, depending on the error status (byte 2 of the response)
 	n, err = io.ReadAtLeast(mb.conn, data[:], rtuMinSize)
 	if err != nil {
 		return
 	}
-	//if the function is correct
+	// if the function is correct
 	if data[1] == function {
-		//we read the rest of the bytes
+		// we read the rest of the bytes
 		if n < bytesToRead {
 			if bytesToRead > rtuMinSize && bytesToRead <= rtuMaxSize {
 				n1, err = io.ReadFull(mb.conn, data[n:bytesToRead])
@@ -94,7 +92,7 @@ func (mb *rtuTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err er
 			}
 		}
 	} else if data[1] == functionFail {
-		//for error we need to read 5 bytes
+		// for error we need to read 5 bytes
 		if n < rtuExceptionSize {
 			n1, err = io.ReadFull(mb.conn, data[n:rtuExceptionSize])
 		}

@@ -6,7 +6,6 @@ package test
 
 import (
 	"log"
-	"os"
 	"testing"
 
 	"github.com/grid-x/modbus"
@@ -30,7 +29,7 @@ func TestRTUClientAdvancedUsage(t *testing.T) {
 	handler.Parity = "E"
 	handler.StopBits = 1
 	handler.SlaveID = 11
-	handler.Logger = log.New(os.Stdout, "rtu: ", log.LstdFlags)
+	handler.Logger = log.Default()
 	err := handler.Connect()
 	if err != nil {
 		t.Fatal(err)

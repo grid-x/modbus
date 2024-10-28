@@ -144,7 +144,7 @@ type tcpTransporter struct {
 	// Silent period after successful connection
 	ConnectDelay time.Duration
 	// Transmission logger
-	Logger logger
+	Logger Logger
 
 	// TCP connection
 	mu           sync.Mutex
@@ -194,14 +194,14 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 		// Set timer to close when idle
 		mb.lastActivity = time.Now()
 		mb.startCloseTimer()
+
 		// Set write and read timeout
-		var timeout time.Time
 		if mb.Timeout > 0 {
-			timeout = mb.lastActivity.Add(mb.Timeout)
+			if err = mb.conn.SetDeadline(mb.lastActivity.Add(mb.Timeout)); err != nil {
+				return
+			}
 		}
-		if err = mb.conn.SetDeadline(timeout); err != nil {
-			return
-		}
+
 		// Send data
 		mb.logf("modbus: send % x", aduRequest)
 		if _, err = mb.conn.Write(aduRequest); err != nil {
