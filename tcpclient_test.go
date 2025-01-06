@@ -13,7 +13,8 @@ import (
 )
 
 func TestTCPEncoding(t *testing.T) {
-	packager := tcpPackager{}
+	var transactionID uint32 = 1
+	packager := tcpPackager{transactionID: &transactionID}
 	pdu := ProtocolDataUnit{}
 	pdu.FunctionCode = 3
 	pdu.Data = []byte{0, 4, 0, 3}
@@ -30,8 +31,8 @@ func TestTCPEncoding(t *testing.T) {
 }
 
 func TestTCPDecoding(t *testing.T) {
-	packager := tcpPackager{}
-	packager.transactionID = 1
+	var transactionID uint32 = 1
+	packager := tcpPackager{transactionID: &transactionID}
 	packager.SlaveID = 17
 	adu := []byte{0, 1, 0, 0, 0, 6, 17, 3, 0, 120, 0, 3}
 
