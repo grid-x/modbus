@@ -33,7 +33,7 @@ func main() {
 	// tcp tls
 	flag.StringVar(&opt.tcp.certFile, "tcp-tls-cert", "", "TLS cert file")
 	flag.StringVar(&opt.tcp.keyFile, "tcp-tls-key", "", "TLS key file")
-	flag.BoolVar(&opt.tcp.insecure, "tcp-tls-insecure", false, "Skip tls certificate verification")
+	flag.BoolVar(&opt.tcp.insecure, "tcp-tls-insecure", false, "Skip TLS verifications of server certificate and host name")
 	// rtu
 	flag.IntVar(&opt.rtu.baudrate, "rtu-baudrate", 2400, "Symbol rate, e.g.: 300, 600, 1200, 2400, 4800, 9600, 19200, 38400")
 	flag.IntVar(&opt.rtu.dataBits, "rtu-databits", 8, "5, 6, 7 or 8")
