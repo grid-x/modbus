@@ -504,7 +504,7 @@ func newHandler(o option) (modbus.ClientHandler, error) {
 			if err != nil {
 				return nil, fmt.Errorf("loading key pair: %w", err)
 			}
-			options = append(options, modbus.WithTlsConfig(&tls.Config{
+			options = append(options, modbus.WithTLSConfig(&tls.Config{
 				Certificates:       []tls.Certificate{cert},
 				InsecureSkipVerify: o.tcp.insecure,
 			}))

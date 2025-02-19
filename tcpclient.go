@@ -55,8 +55,8 @@ func NewTCPClientHandler(address string, options ...TCPClientHandlerOption) *TCP
 // TCPClientHandlerOption configures a TCPClientHandler.
 type TCPClientHandlerOption func(*TCPClientHandler)
 
-// WithTlsConfig returns a TCPClientHandlerOption that enables TLS encryption with the given options.
-func WithTlsConfig(config *tls.Config) TCPClientHandlerOption {
+// WithTLSConfig returns a TCPClientHandlerOption that enables TLS encryption with the given options.
+func WithTLSConfig(config *tls.Config) TCPClientHandlerOption {
 	return func(h *TCPClientHandler) {
 		h.tlsConfig = config
 	}
