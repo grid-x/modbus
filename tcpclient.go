@@ -350,20 +350,19 @@ func (mb *tcpTransporter) Connect() error {
 
 func (mb *tcpTransporter) connect() error {
 	if mb.conn == nil {
-		dialer := net.Dialer{Timeout: mb.Timeout}
+		var conn net.Conn
 		var err error
+		dialer := net.Dialer{Timeout: mb.Timeout}
 		if mb.tlsConfig != nil {
-			mb.conn, err = tls.DialWithDialer(&dialer, "tcp", mb.Address, mb.tlsConfig)
-			if err != nil {
+			if conn, err = tls.DialWithDialer(&dialer, "tcp", mb.Address, mb.tlsConfig); err != nil {
 				return err
 			}
 		} else {
-			mb.conn, err = dialer.Dial("tcp", mb.Address)
-			if err != nil {
+			if conn, err = dialer.Dial("tcp", mb.Address); err != nil {
 				return err
 			}
 		}
-
+		mb.conn = conn
 		// silent period
 		time.Sleep(mb.ConnectDelay)
 	}
