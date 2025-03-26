@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -15,8 +16,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/grid-x/modbus"
 	"github.com/grid-x/serial"
+
+	"github.com/grid-x/modbus"
 )
 
 func main() {
@@ -28,6 +30,10 @@ func main() {
 	// tcp
 	flag.DurationVar(&opt.tcp.linkRecoveryTimeout, "tcp-timeout-link-recovery", 20*time.Second, "Link timeout")
 	flag.DurationVar(&opt.tcp.protocolRecoveryTimeout, "tcp-timeout-protocol-recovery", 20*time.Second, "Proto timeout")
+	// tcp tls
+	flag.StringVar(&opt.tcp.certFile, "tcp-tls-cert", "", "TLS cert file")
+	flag.StringVar(&opt.tcp.keyFile, "tcp-tls-key", "", "TLS key file")
+	flag.BoolVar(&opt.tcp.insecure, "tcp-tls-insecure", false, "Skip TLS verifications of server certificate and host name")
 	// rtu
 	flag.IntVar(&opt.rtu.baudrate, "rtu-baudrate", 2400, "Symbol rate, e.g.: 300, 600, 1200, 2400, 4800, 9600, 19200, 38400")
 	flag.IntVar(&opt.rtu.dataBits, "rtu-databits", 8, "5, 6, 7 or 8")
@@ -457,6 +463,10 @@ type option struct {
 	tcp struct {
 		linkRecoveryTimeout     time.Duration
 		protocolRecoveryTimeout time.Duration
+
+		certFile string
+		keyFile  string
+		insecure bool
 	}
 }
 
@@ -485,7 +495,21 @@ func newHandler(o option) (modbus.ClientHandler, error) {
 		}
 		return h, nil
 	case "tcp":
-		h := modbus.NewTCPClientHandler(u.Host)
+		var options []modbus.TCPClientHandlerOption
+		if o.tcp.certFile != "" {
+			if o.tcp.keyFile == "" {
+				return nil, fmt.Errorf("key file not specified")
+			}
+			cert, err := tls.LoadX509KeyPair(o.tcp.certFile, o.tcp.keyFile)
+			if err != nil {
+				return nil, fmt.Errorf("loading key pair: %w", err)
+			}
+			options = append(options, modbus.WithTLSConfig(&tls.Config{
+				Certificates:       []tls.Certificate{cert},
+				InsecureSkipVerify: o.tcp.insecure,
+			}))
+		}
+		h := modbus.NewTCPClientHandler(u.Host, options...)
 		h.Timeout = o.timeout
 		h.SlaveID = byte(o.slaveID)
 		h.LinkRecoveryTimeout = o.tcp.linkRecoveryTimeout

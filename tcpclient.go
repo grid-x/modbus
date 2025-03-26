@@ -5,6 +5,7 @@
 package modbus
 
 import (
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -39,12 +40,28 @@ type TCPClientHandler struct {
 	*tcpTransporter
 }
 
-// NewTCPClientHandler allocates a new TCPClientHandler.
-func NewTCPClientHandler(address string) *TCPClientHandler {
+// NewTCPClientHandler allocates a new TCPClientHandler with the given options.
+func NewTCPClientHandler(address string, options ...TCPClientHandlerOption) *TCPClientHandler {
 	transport := defaultTCPTransporter(address)
-	return &TCPClientHandler{
+	h := &TCPClientHandler{
 		tcpPackager:    tcpPackager{transactionID: &transport.transactionID},
 		tcpTransporter: &transport,
+	}
+
+	for _, o := range options {
+		o(h)
+	}
+
+	return h
+}
+
+// TCPClientHandlerOption configures a TCPClientHandler.
+type TCPClientHandlerOption func(*TCPClientHandler)
+
+// WithTLSConfig returns a TCPClientHandlerOption that enables TLS encryption with the given options.
+func WithTLSConfig(config *tls.Config) TCPClientHandlerOption {
+	return func(h *TCPClientHandler) {
+		h.tlsConfig = config
 	}
 }
 
@@ -157,6 +174,8 @@ type tcpTransporter struct {
 
 	// For synchronization between messages of server & client
 	transactionID uint32
+
+	tlsConfig *tls.Config
 }
 
 // defaultTCPTransporter creates a new tcpTransporter with default values.
@@ -354,13 +373,19 @@ func (mb *tcpTransporter) Connect() error {
 
 func (mb *tcpTransporter) connect() error {
 	if mb.conn == nil {
+		var conn net.Conn
+		var err error
 		dialer := net.Dialer{Timeout: mb.Timeout}
-		conn, err := dialer.Dial("tcp", mb.Address)
-		if err != nil {
-			return err
+		if mb.tlsConfig != nil {
+			if conn, err = tls.DialWithDialer(&dialer, "tcp", mb.Address, mb.tlsConfig); err != nil {
+				return err
+			}
+		} else {
+			if conn, err = dialer.Dial("tcp", mb.Address); err != nil {
+				return err
+			}
 		}
 		mb.conn = conn
-
 		// silent period
 		time.Sleep(mb.ConnectDelay)
 	}
