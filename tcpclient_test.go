@@ -6,8 +6,18 @@ package modbus
 
 import (
 	"bytes"
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/binary"
+	"fmt"
 	"io"
+	"math/big"
 	"net"
+	"slices"
 	"testing"
 	"time"
 )
@@ -73,6 +83,7 @@ func TestTCPTransporter(t *testing.T) {
 		Address:     ln.Addr().String(),
 		Timeout:     1 * time.Second,
 		IdleTimeout: 100 * time.Millisecond,
+		Dial:        defaultDialFunc(1 * time.Second),
 	}
 	req := []byte{0, 1, 0, 2, 0, 2, 1, 2}
 	rsp, err := client.Send(req)
@@ -172,6 +183,169 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 	if !bytes.Equal(resp, data) {
 		t.Fatalf("got wrong response: got %q wanted %q", resp, data)
 	}
+}
+
+func TestCustomDialer(t *testing.T) {
+	const tRegisterNum uint16 = 0xCAFE
+
+	const tSentinelVal uint32 = 0xBADC0DE
+	const qtyUint32 = 2
+
+	// Processes cli.ReadInputRegisters() and returns a static integer value.
+	acceptConnAndRespond := func(srvLn net.Listener) error {
+		conn, err := srvLn.Accept()
+		if err != nil {
+			return fmt.Errorf("accepting server connection: %w", err)
+		}
+
+		readBuf := make([]byte, bytes.MinRead)
+		n, err := conn.Read(readBuf)
+		if err != nil {
+			return fmt.Errorf("reading from server connection: %w", err)
+		}
+
+		const fnc = FuncCodeReadInputRegisters
+
+		// Ensure that the request originates from the test.
+		requestAdu, err := (&tcpPackager{}).Decode(readBuf[:n])
+		if err != nil {
+			return fmt.Errorf("decoding ProtocolDataUnit: %w", err)
+		}
+		if requestAdu.FunctionCode != fnc {
+			return fmt.Errorf("unexpected request function code (%v/%v)", requestAdu.FunctionCode, fnc)
+		}
+		var expectData []byte
+		expectData = binary.BigEndian.AppendUint16(expectData, tRegisterNum)
+		expectData = binary.BigEndian.AppendUint16(expectData, qtyUint32)
+		if !slices.Equal(expectData, requestAdu.Data) {
+			return fmt.Errorf("unexpected request data (%v/%v)", requestAdu.Data, expectData)
+		}
+
+		const sizeUint32 = 4
+		var writeData []byte
+		writeData = append(writeData, sizeUint32)
+		writeData = binary.BigEndian.AppendUint32(writeData, tSentinelVal)
+		pdu := &ProtocolDataUnit{
+			FunctionCode: fnc,
+			Data:         writeData,
+		}
+		responseData, err := (&tcpPackager{}).Encode(pdu)
+		if err != nil {
+			return fmt.Errorf("encoding ProtocolDataUnit: %w", err)
+		}
+
+		_, err = conn.Write(responseData)
+		return err
+	}
+	mustAcceptConnAndRespond := func(srvLn net.Listener) {
+		// cli.ReadInputRegisters() performs non cancellable I/O operations, so we
+		// panic in case of error to avoid having to wait for the Client to time out.
+		if err := acceptConnAndRespond(srvLn); err != nil {
+			panic("server failed: " + err.Error())
+		}
+	}
+
+	// Asserts that the response comes from the expected server.
+	assertResponse := func(t *testing.T, c Client) {
+		t.Helper()
+		res, err := c.ReadInputRegisters(tRegisterNum, qtyUint32)
+		if err != nil {
+			t.Fatal("ReadInputRegisters:", err)
+		}
+		got := binary.BigEndian.Uint32(res)
+		if expect := tSentinelVal; expect != got {
+			t.Errorf("Expected %d, got %d", expect, got)
+		}
+	}
+
+	// Creates a Client that uses a pre-dialed connection instead of calling
+	// net.Dial itself.
+	newClient := func(t *testing.T, srvLn net.Listener, opts ...TCPClientHandlerOption) Client {
+		// Invalid server IP (TEST-NET-1, RFC5737); ensures that all I/O operations
+		// are going over the pre-dialed connection instead of a connection dialed
+		// by the client.
+		const tAddr = "192.0.2.1"
+
+		srvAddr := srvLn.Addr()
+		conn, err := net.Dial(srvAddr.Network(), srvAddr.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		dialFn := func(context.Context, string, string) (net.Conn, error) {
+			return conn, nil
+		}
+
+		return NewClient(NewTCPClientHandler(tAddr, append([]TCPClientHandlerOption{
+			WithDialer(dialFn)},
+			opts...,
+		)...))
+	}
+
+	// Generates a new TLS certificate suitable for a test server.
+	newTLSServerCert := func(t *testing.T, srvName string) tls.Certificate {
+		t.Helper()
+		pk, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpl := &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			DNSNames:     []string{srvName},
+			NotAfter:     time.Now().Add(10 * time.Second),
+		}
+		crtDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pk.Public(), pk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tls.Certificate{
+			Certificate: [][]byte{crtDER},
+			PrivateKey:  pk,
+		}
+	}
+
+	t.Run("Without TLS config", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { ln.Close() })
+
+		cli := newClient(t, ln)
+
+		go mustAcceptConnAndRespond(ln)
+		assertResponse(t, cli)
+	})
+
+	t.Run("With TLS config", func(t *testing.T) {
+		const tServerName = "test-server"
+
+		srvCrt := newTLSServerCert(t, tServerName)
+
+		ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+			Certificates: []tls.Certificate{srvCrt},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { ln.Close() })
+
+		x509SrvCrt, err := x509.ParseCertificate(srvCrt.Certificate[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		rootCAs := x509.NewCertPool()
+		rootCAs.AddCert(x509SrvCrt)
+		cli := newClient(t, ln,
+			WithTLSConfig(&tls.Config{
+				ServerName: tServerName,
+				RootCAs:    rootCAs,
+			}),
+		)
+
+		go mustAcceptConnAndRespond(ln)
+		assertResponse(t, cli)
+	})
 }
 
 func BenchmarkTCPEncoder(b *testing.B) {

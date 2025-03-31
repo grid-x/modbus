@@ -6,6 +6,7 @@ package modbus
 
 import (
 	"io"
+	"net"
 	"time"
 )
 
@@ -21,6 +22,7 @@ func NewRTUOverTCPClientHandler(address string) *RTUOverTCPClientHandler {
 	handler.Address = address
 	handler.Timeout = tcpTimeout
 	handler.IdleTimeout = tcpIdleTimeout
+	handler.Dial = defaultDialFunc(handler.Timeout)
 	return handler
 }
 
