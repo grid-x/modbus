@@ -4,9 +4,7 @@
 
 package modbus
 
-import (
-	"time"
-)
+import "time"
 
 // ASCIIOverTCPClientHandler implements Packager and Transporter interface.
 type ASCIIOverTCPClientHandler struct {
@@ -20,6 +18,7 @@ func NewASCIIOverTCPClientHandler(address string) *ASCIIOverTCPClientHandler {
 	handler.Address = address
 	handler.Timeout = tcpTimeout
 	handler.IdleTimeout = tcpIdleTimeout
+	handler.Dial = defaultDialFunc(handler.Timeout)
 	return handler
 }
 

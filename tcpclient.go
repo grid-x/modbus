@@ -5,6 +5,7 @@
 package modbus
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -49,11 +50,29 @@ func NewTCPClientHandler(address string, options ...TCPClientHandlerOption) *TCP
 	h.Address = address
 	h.Timeout = tcpTimeout
 	h.IdleTimeout = tcpIdleTimeout
+	if h.Dial == nil {
+		h.Dial = defaultDialFunc(h.Timeout)
+	}
 	return h
 }
 
 // TCPClientHandlerOption configures a TCPClientHandler.
 type TCPClientHandlerOption func(*TCPClientHandler)
+
+// WithDialer returns a TCPClientHandlerOption that sets a custom Dial function.
+func WithDialer(d DialFunc) TCPClientHandlerOption {
+	return func(h *TCPClientHandler) {
+		h.Dial = d
+	}
+}
+
+// DialFunc is the prototype of a function that connects to an address on a
+// named network. It Satisfies the [net.Dialer.DialContext] function signature.
+type DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+
+func defaultDialFunc(timeout time.Duration) DialFunc {
+	return (&net.Dialer{Timeout: timeout}).DialContext
+}
 
 // WithTLSConfig returns a TCPClientHandlerOption that enables TLS encryption with the given options.
 func WithTLSConfig(config *tls.Config) TCPClientHandlerOption {
@@ -151,6 +170,10 @@ type tcpTransporter struct {
 	ConnectDelay time.Duration
 	// Transmission logger
 	Logger Logger
+
+	// Dial specifies the dial function for creating TCP connections.
+	// If nil, the transporter dials using the net package.
+	Dial DialFunc
 
 	// TCP connection
 	mu           sync.Mutex
@@ -350,17 +373,12 @@ func (mb *tcpTransporter) Connect() error {
 
 func (mb *tcpTransporter) connect() error {
 	if mb.conn == nil {
-		var conn net.Conn
-		var err error
-		dialer := net.Dialer{Timeout: mb.Timeout}
+		conn, err := mb.Dial(context.Background(), "tcp", mb.Address)
+		if err != nil {
+			return err
+		}
 		if mb.tlsConfig != nil {
-			if conn, err = tls.DialWithDialer(&dialer, "tcp", mb.Address, mb.tlsConfig); err != nil {
-				return err
-			}
-		} else {
-			if conn, err = dialer.Dial("tcp", mb.Address); err != nil {
-				return err
-			}
+			conn = tls.Client(conn, mb.tlsConfig)
 		}
 		mb.conn = conn
 		// silent period
