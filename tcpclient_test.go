@@ -96,6 +96,7 @@ func TestErrTCPHeaderLength_Error(t *testing.T) {
 	_ = ErrTCPHeaderLength(1000).Error()
 }
 
+// TODO broken
 func TestTCPTransactionMismatchRetry(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
