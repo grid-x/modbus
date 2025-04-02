@@ -547,6 +547,7 @@ func (w *writer) ToInt32(v int32) []byte {
 	b, _ := io.ReadAll(&buf)
 	return b
 }
+
 func (w *writer) ToUint16(v uint16) []byte {
 	var buf bytes.Buffer
 	w.to(&buf, v)
