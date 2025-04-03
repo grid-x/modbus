@@ -160,7 +160,10 @@ type tcpTransporter struct {
 	Address string
 	// Connect & Read timeout
 	Timeout time.Duration
-	// Idle timeout to close the connection
+	// Idle timeout to close the connection.
+	// If negative, cached connections do not time out.
+	// If zero, disables the caching of TCP connections and only uses dialed
+	// connections for a single Send.
 	IdleTimeout time.Duration
 	// Recovery timeout if tcp communication misbehaves
 	LinkRecoveryTimeout time.Duration
@@ -200,6 +203,10 @@ const (
 func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
+
+	if mb.IdleTimeout == 0 {
+		defer mb.close()
+	}
 
 	var data [tcpMaxLength]byte
 	recoveryDeadline := time.Now().Add(mb.IdleTimeout)
@@ -442,7 +449,7 @@ func (mb *tcpTransporter) closeIdle() {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
-	if mb.IdleTimeout <= 0 {
+	if mb.IdleTimeout < 0 {
 		return
 	}
 

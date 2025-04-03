@@ -13,6 +13,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -191,7 +192,7 @@ func TestCustomDialer(t *testing.T) {
 	const tSentinelVal uint32 = 0xBADC0DE
 	const qtyUint32 = 2
 
-	// Processes cli.ReadInputRegisters() and returns a static integer value.
+	// Processes a single cli.ReadInputRegisters() and returns a static integer value.
 	acceptConnAndRespond := func(srvLn net.Listener) error {
 		conn, err := srvLn.Accept()
 		if err != nil {
@@ -345,6 +346,174 @@ func TestCustomDialer(t *testing.T) {
 
 		go mustAcceptConnAndRespond(ln)
 		assertResponse(t, cli)
+	})
+}
+
+func TestConnCaching(t *testing.T) {
+	// Accepts exactly one connection and processes requests by returning a
+	// static integer value until srvLn gets closed.
+	serve := func(srvLn net.Listener) error {
+		conn, err := srvLn.Accept()
+		if err != nil {
+			return fmt.Errorf("accepting server connection: %w", err)
+		}
+
+		var pkgr tcpPackager
+		readBuf := make([]byte, bytes.MinRead)
+		for {
+			n, err := conn.Read(readBuf)
+			if err != nil {
+				if err == io.EOF {
+					// test ended, srvLn was closed
+					return nil
+				}
+				return fmt.Errorf("reading from server connection: %w", err)
+			}
+
+			requestAdu, err := pkgr.Decode(readBuf[:n])
+			if err != nil {
+				return fmt.Errorf("decoding ProtocolDataUnit: %w", err)
+			}
+			fnc := requestAdu.FunctionCode
+
+			const sizeUint32 = 4
+			var writeData []byte
+			writeData = append(writeData, sizeUint32)
+			writeData = binary.BigEndian.AppendUint32(writeData, 0xBADC0DE)
+			pdu := &ProtocolDataUnit{
+				FunctionCode: fnc,
+				Data:         writeData,
+			}
+			responseData, err := pkgr.Encode(pdu)
+			if err != nil {
+				return fmt.Errorf("encoding ProtocolDataUnit: %w", err)
+			}
+
+			if _, err = conn.Write(responseData); err != nil {
+				return fmt.Errorf("writing to server connection: %w", err)
+			}
+		}
+	}
+	mustServe := func(srvLn net.Listener) {
+		// cli.ReadInputRegisters() performs non cancellable I/O operations, so we
+		// panic in case of error to avoid having to wait for the Client to time out.
+		if err := serve(srvLn); err != nil {
+			panic("server failed: " + err.Error())
+		}
+	}
+
+	// Calls ReadInputRegisters with test parameters.
+	doSend := func(c Client) error {
+		const qtyUint32 = 2
+		_, err := c.ReadInputRegisters(0xCAFE, qtyUint32)
+		return err
+	}
+
+	// Reads tr.conn after acquiring a lock.
+	getConn := func(tr *tcpTransporter) net.Conn {
+		tr.mu.Lock()
+		defer tr.mu.Unlock()
+		return tr.conn
+	}
+
+	// Creates a TCPClientHandler with timeouts suitable for testing.
+	newHandler := func(addr string) *TCPClientHandler {
+		h := NewTCPClientHandler(addr)
+		h.Timeout = 5 * time.Millisecond
+		return h
+	}
+
+	t.Run("With connection caching", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { ln.Close() })
+
+		go mustServe(ln)
+
+		srvAddr := ln.Addr().String()
+		h := newHandler(srvAddr)
+		h.IdleTimeout = 5 * time.Millisecond // short, but long enough to pass on slow runners
+		cli := NewClient(h)
+
+		tr := &h.tcpTransporter
+		if getConn(tr) != nil {
+			t.Fatal("TCP connection should not exist on client creation")
+		}
+
+		// 1. Should succeed and result in a connection being created and cached.
+		if err = doSend(cli); err != nil {
+			t.Fatal("First Send failed:", err)
+		}
+		firstConn := getConn(tr)
+		if firstConn == nil {
+			t.Fatal("Connection was not created on first Send")
+		}
+
+		// 2. Should succeed and re-use the previously created connection.
+		if err = doSend(cli); err != nil {
+			t.Fatal("Second Send failed:", err)
+		}
+		if getConn(tr) != firstConn {
+			t.Fatal("Connection differs from previous Send")
+		}
+
+		// 3. The connection should expire and be removed after IdleTimeout.
+		time.Sleep(h.IdleTimeout + time.Millisecond)
+		if getConn(tr) != nil {
+			t.Fatal("Connection did not expire after sleeping for IdleTimeout")
+		}
+
+		// 4. Should create a new connection and time out due to creating a new connection.
+		err = doSend(cli)
+		if getConn(tr) == firstConn {
+			t.Fatal("Connection was not recreated after sleeping for IdleTimeout")
+		}
+		if err == nil {
+			t.Fatal("Third Send was expected to time out but succeeded")
+		} else if netErr := (net.Error)(nil); errors.As(err, &netErr) && !netErr.Timeout() {
+			t.Fatal("Third Send was expected to time out, but failed with:", err)
+		}
+	})
+
+	t.Run("Without connection caching", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { ln.Close() })
+
+		go mustServe(ln)
+
+		srvAddr := ln.Addr().String()
+		h := newHandler(srvAddr)
+		h.IdleTimeout = 0 // disable caching
+		cli := NewClient(h)
+
+		tr := &h.tcpTransporter
+		if getConn(tr) != nil {
+			t.Fatal("TCP connection should not exist on client creation")
+		}
+
+		// 1. Should succeed and not result in a connection being cached.
+		if err = doSend(cli); err != nil {
+			t.Fatal("First Send failed:", err)
+		}
+		if getConn(tr) != nil {
+			t.Fatal("Connection unexpectedly created on Send")
+		}
+
+		// 2. Should time out due to creating a new connection.
+		err = doSend(cli)
+		if getConn(tr) != nil {
+			t.Fatal("Connection unexpectedly created on Send")
+		}
+		if err == nil {
+			t.Fatal("Second Send was expected to time out but succeeded")
+		} else if netErr := (net.Error)(nil); errors.As(err, &netErr) && !netErr.Timeout() {
+			t.Fatal("Second Send was expected to time out, but failed with:", err)
+		}
 	})
 }
 
