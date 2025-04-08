@@ -7,6 +7,7 @@ package modbus
 import (
 	"encoding/binary"
 	"fmt"
+	"time"
 )
 
 // Logger is the interface to the required logging functions
@@ -512,12 +513,25 @@ func (mb *client) send(request *ProtocolDataUnit) (response *ProtocolDataUnit, e
 	if err != nil {
 		return
 	}
-	aduResponse, err := mb.transporter.Send(aduRequest)
-	if err != nil {
-		return
-	}
-	if err = mb.packager.Verify(aduRequest, aduResponse); err != nil {
-		return
+
+	// Wait for correct response ID before throwing error.
+	var aduResponse []byte
+	maxTime := time.Now().Add(tcpTimeout)
+	for {
+		aduResponse, err = mb.transporter.Send(aduRequest)
+		if err != nil {
+			return
+		}
+		err = mb.packager.Verify(aduRequest, aduResponse)
+
+		if err == nil {
+			break
+		}
+		if time.Now().After(maxTime) {
+			err = fmt.Errorf("modbus: response timeout")
+			return
+		}
+		// Else try again until timeout.
 	}
 	response, err = mb.packager.Decode(aduResponse)
 	if err != nil {
