@@ -250,7 +250,11 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 		mb.logf("modbus: close connection and retry, because of %v", err)
 
 		mb.close()
-		time.Sleep(mb.LinkRecoveryTimeout)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(mb.LinkRecoveryTimeout):
+		}
 	}
 }
 
