@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"flag"
@@ -11,6 +12,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -100,7 +102,10 @@ func main() {
 		logger.Error(err.Error())
 		os.Exit(-1)
 	}
-	if err := handler.Connect(); err != nil {
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+	if err := handler.Connect(ctx); err != nil {
 		logger.Error(err.Error())
 		os.Exit(-1)
 	}
@@ -108,7 +113,7 @@ func main() {
 
 	client := modbus.NewClient(handler)
 
-	result, err := exec(client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity)
+	result, err := exec(ctx, client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity)
 	if err != nil && strings.Contains(err.Error(), "crc") && *ignoreCRCError {
 		logger.Info("ignoring crc error: %+v\n", err)
 	} else if err != nil {
@@ -144,6 +149,7 @@ func main() {
 }
 
 func exec(
+	ctx context.Context,
 	client modbus.Client,
 	o binary.ByteOrder,
 	forcedOrder string,
@@ -157,7 +163,7 @@ func exec(
 	var result []byte
 	switch fnCode {
 	case 0x01:
-		result, err = client.ReadCoils(uint16(register), uint16(quantity))
+		result, err = client.ReadCoils(ctx, uint16(register), uint16(quantity))
 	case 0x05:
 		const (
 			coilOn  uint16 = 0xFF00
@@ -167,25 +173,25 @@ func exec(
 		if wval > 0 {
 			v = coilOn
 		}
-		result, err = client.WriteSingleCoil(uint16(register), v)
+		result, err = client.WriteSingleCoil(ctx, uint16(register), v)
 	case 0x06:
 		max := float64(math.MaxUint16)
 		if wval > max || wval < 0 {
 			err = fmt.Errorf("overflow: %f does not fit into datatype uint16", wval)
 			break
 		}
-		result, err = client.WriteSingleRegister(uint16(register), uint16(wval))
+		result, err = client.WriteSingleRegister(ctx, uint16(register), uint16(wval))
 	case 0x10:
 		var buf []byte
 		buf, err = convertToBytes(etype, o, forcedOrder, wval)
 		if err != nil {
 			break
 		}
-		result, err = client.WriteMultipleRegisters(uint16(register), uint16(len(buf))/2, buf)
+		result, err = client.WriteMultipleRegisters(ctx, uint16(register), uint16(len(buf))/2, buf)
 	case 0x04:
-		result, err = client.ReadInputRegisters(uint16(register), uint16(quantity))
+		result, err = client.ReadInputRegisters(ctx, uint16(register), uint16(quantity))
 	case 0x03:
-		result, err = client.ReadHoldingRegisters(uint16(register), uint16(quantity))
+		result, err = client.ReadHoldingRegisters(ctx, uint16(register), uint16(quantity))
 	default:
 		err = fmt.Errorf("function code %d is unsupported", fnCode)
 	}

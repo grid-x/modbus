@@ -5,6 +5,7 @@
 package modbus
 
 import (
+	"context"
 	"io"
 	"time"
 )
@@ -37,12 +38,12 @@ type rtuTCPTransporter struct {
 }
 
 // Send sends data to server and ensures adequate response for request type
-func (mb *rtuTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+func (mb *rtuTCPTransporter) Send(ctx context.Context, aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
 	// Establish a new connection if not connected
-	if err = mb.connect(); err != nil {
+	if err = mb.connect(ctx); err != nil {
 		return
 	}
 	// Set timer to close when idle

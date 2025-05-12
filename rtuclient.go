@@ -5,6 +5,7 @@
 package modbus
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -251,12 +252,12 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Ti
 	}
 }
 
-func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+func (mb *rtuSerialTransporter) Send(ctx context.Context, aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
 	// Make sure port is connected
-	if err = mb.connect(); err != nil {
+	if err = mb.connect(ctx); err != nil {
 		return
 	}
 	// Start the timer to close when idle
@@ -271,7 +272,11 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	// function := aduRequest[1]
 	// functionFail := aduRequest[1] & 0x80
 	bytesToRead := calculateResponseLength(aduRequest)
-	time.Sleep(mb.calculateDelay(len(aduRequest) + bytesToRead))
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(mb.calculateDelay(len(aduRequest) + bytesToRead)):
+	}
 
 	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.port, time.Now().Add(mb.Config.Timeout))
 	mb.logf("modbus: recv % x\n", data[:])

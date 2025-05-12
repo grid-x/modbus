@@ -87,7 +87,7 @@ func TestTCPTransporter(t *testing.T) {
 		Dial:        defaultDialFunc(1 * time.Second),
 	}
 	req := []byte{0, 1, 0, 2, 0, 2, 1, 2}
-	rsp, err := client.Send(req)
+	rsp, err := client.Send(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,18 +166,19 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 	handler := NewTCPClientHandler(ln.Addr().String())
 	handler.Timeout = 1 * time.Second
 	handler.ProtocolRecoveryTimeout = 50 * time.Millisecond
+	ctx := context.Background()
 	client := NewClient(handler)
-	_, err = client.ReadInputRegisters(0, 1)
+	_, err = client.ReadInputRegisters(ctx, 0, 1)
 	opError, ok := err.(*net.OpError)
 	if !ok || !opError.Timeout() {
 		t.Fatalf("expected timeout error, got %q", err)
 	}
-	_, err = client.ReadInputRegisters(0, 1)
+	_, err = client.ReadInputRegisters(ctx, 0, 1)
 	opError, ok = err.(*net.OpError)
 	if !ok || !opError.Timeout() {
 		t.Fatalf("expected timeout error, got %q", err)
 	}
-	resp, err := client.ReadInputRegisters(0, 1)
+	resp, err := client.ReadInputRegisters(ctx, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +250,7 @@ func TestCustomDialer(t *testing.T) {
 	// Asserts that the response comes from the expected server.
 	assertResponse := func(t *testing.T, c Client) {
 		t.Helper()
-		res, err := c.ReadInputRegisters(tRegisterNum, qtyUint32)
+		res, err := c.ReadInputRegisters(context.Background(), tRegisterNum, qtyUint32)
 		if err != nil {
 			t.Fatal("ReadInputRegisters:", err)
 		}
@@ -405,7 +406,7 @@ func TestConnCaching(t *testing.T) {
 	// Calls ReadInputRegisters with test parameters.
 	doSend := func(c Client) error {
 		const qtyUint32 = 2
-		_, err := c.ReadInputRegisters(0xCAFE, qtyUint32)
+		_, err := c.ReadInputRegisters(context.Background(), 0xCAFE, qtyUint32)
 		return err
 	}
 

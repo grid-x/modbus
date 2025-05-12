@@ -1,6 +1,7 @@
 package modbus
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -53,7 +54,7 @@ type rtuUDPTransporter struct {
 }
 
 // Send sends data to server and ensures adequate response for request type
-func (mb *rtuUDPTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+func (mb *rtuUDPTransporter) Send(ctx context.Context, aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
@@ -64,7 +65,7 @@ func (mb *rtuUDPTransporter) Send(aduRequest []byte) (aduResponse []byte, err er
 	}
 
 	// Establish a new connection if not connected
-	if err = mb.connect(); err != nil {
+	if err = mb.connect(ctx); err != nil {
 		return
 	}
 
@@ -124,19 +125,24 @@ func (mb *rtuUDPTransporter) logf(format string, v ...interface{}) {
 }
 
 // Connect establishes a new connection to the address in Address.
-func (mb *rtuUDPTransporter) Connect() error {
+func (mb *rtuUDPTransporter) Connect(ctx context.Context) error {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
-	return mb.connect()
+	return mb.connect(ctx)
 }
 
 // connect establishes a new connection to the address in Address. Caller must hold the mutex before calling this method.
 // Since UDP is connectionless this does little more than setting up the connection object.
-func (mb *rtuUDPTransporter) connect() error {
+func (mb *rtuUDPTransporter) connect(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 	if mb.conn == nil {
 		dialer := net.Dialer{}
-		conn, err := dialer.Dial("udp", mb.Address)
+		conn, err := dialer.DialContext(ctx, "udp", mb.Address)
 		if err != nil {
 			return err
 		}

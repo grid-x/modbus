@@ -4,7 +4,10 @@
 
 package modbus
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // ASCIIOverTCPClientHandler implements Packager and Transporter interface.
 type ASCIIOverTCPClientHandler struct {
@@ -33,12 +36,12 @@ type asciiTCPTransporter struct {
 	tcpTransporter
 }
 
-func (mb *asciiTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+func (mb *asciiTCPTransporter) Send(ctx context.Context, aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
 	// Make sure port is connected
-	if err = mb.connect(); err != nil {
+	if err = mb.connect(ctx); err != nil {
 		return
 	}
 	// Start the timer to close when idle

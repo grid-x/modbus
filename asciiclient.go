@@ -6,6 +6,7 @@ package modbus
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"time"
@@ -168,12 +169,12 @@ type asciiSerialTransporter struct {
 	serialPort
 }
 
-func (mb *asciiSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
 	// Make sure port is connected
-	if err = mb.connect(); err != nil {
+	if err = mb.connect(ctx); err != nil {
 		return
 	}
 	// Start the timer to close when idle

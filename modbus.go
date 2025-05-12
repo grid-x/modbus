@@ -8,6 +8,7 @@ Package modbus provides a client for MODBUS TCP and RTU/ASCII.
 package modbus
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -108,11 +109,11 @@ type Packager interface {
 
 // Transporter specifies the transport layer.
 type Transporter interface {
-	Send(aduRequest []byte) (aduResponse []byte, err error)
+	Send(ctx context.Context, aduRequest []byte) (aduResponse []byte, err error)
 }
 
 // Connector exposes the underlying handler capability for open/connect and close the transport channel.
 type Connector interface {
-	Connect() error
+	Connect(ctx context.Context) error
 	Close() error
 }

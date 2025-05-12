@@ -29,12 +29,12 @@ Basic usage:
 // Modbus TCP
 client := modbus.TCPClient("localhost:502")
 // Read input register 9
-results, err := client.ReadInputRegisters(8, 1)
+results, err := client.ReadInputRegisters(context.Background(), 8, 1)
 
 // Modbus RTU/ASCII
 // Default configuration is 19200, 8, 1, even
 client = modbus.RTUClient("/dev/ttyS0")
-results, err = client.ReadCoils(2, 1)
+results, err = client.ReadCoils(context.Background(), 2, 1)
 ```
 
 Advanced usage:
@@ -44,14 +44,15 @@ handler := modbus.NewTCPClientHandler("localhost:502")
 handler.Timeout = 10 * time.Second
 handler.SlaveID = 0xFF
 handler.Logger = log.New(os.Stdout, "test: ", log.LstdFlags)
+ctx := context.Background()
 // Connect manually so that multiple requests are handled in one connection session
-err := handler.Connect()
+err := handler.Connect(ctx)
 defer handler.Close()
 
 client := modbus.NewClient(handler)
-results, err := client.ReadDiscreteInputs(15, 2)
-results, err = client.WriteMultipleRegisters(1, 2, []byte{0, 3, 0, 4})
-results, err = client.WriteMultipleCoils(5, 10, []byte{4, 3})
+results, err := client.ReadDiscreteInputs(ctx, 15, 2)
+results, err = client.WriteMultipleRegisters(ctx, 1, 2, []byte{0, 3, 0, 4})
+results, err = client.WriteMultipleCoils(ctx, 5, 10, []byte{4, 3})
 ```
 
 ```go
@@ -64,11 +65,12 @@ handler.StopBits = 1
 handler.SlaveID = 1
 handler.Timeout = 5 * time.Second
 
-err := handler.Connect()
+ctx := context.Background()
+err := handler.Connect(ctx)
 defer handler.Close()
 
 client := modbus.NewClient(handler)
-results, err := client.ReadDiscreteInputs(15, 2)
+results, err := client.ReadDiscreteInputs(ctx, 15, 2)
 ```
 
 # Modbus-CLI

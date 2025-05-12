@@ -5,6 +5,7 @@
 package modbus
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"sync"
@@ -34,15 +35,20 @@ type serialPort struct {
 	closeTimer   *time.Timer
 }
 
-func (mb *serialPort) Connect() (err error) {
+func (mb *serialPort) Connect(ctx context.Context) (err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
-	return mb.connect()
+	return mb.connect(ctx)
 }
 
 // connect connects to the serial port if it is not connected. Caller must hold the mutex.
-func (mb *serialPort) connect() error {
+func (mb *serialPort) connect(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 	if mb.port == nil {
 		port, err := serial.Open(&mb.Config)
 		if err != nil {

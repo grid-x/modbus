@@ -200,7 +200,7 @@ const (
 )
 
 // Send sends data to server and ensures response length is greater than header length.
-func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
@@ -213,7 +213,7 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 
 	for {
 		// Establish a new connection if not connected
-		if err = mb.connect(); err != nil {
+		if err = mb.connect(ctx); err != nil {
 			return
 		}
 
@@ -371,16 +371,16 @@ func verify(aduRequest []byte, aduResponse []byte) (err error) {
 
 // Connect establishes a new connection to the address in Address.
 // Connect and Close are exported so that multiple requests can be done with one session
-func (mb *tcpTransporter) Connect() error {
+func (mb *tcpTransporter) Connect(ctx context.Context) error {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
-	return mb.connect()
+	return mb.connect(ctx)
 }
 
-func (mb *tcpTransporter) connect() error {
+func (mb *tcpTransporter) connect(ctx context.Context) error {
 	if mb.conn == nil {
-		conn, err := mb.Dial(context.Background(), "tcp", mb.Address)
+		conn, err := mb.Dial(ctx, "tcp", mb.Address)
 		if err != nil {
 			return err
 		}
@@ -388,8 +388,11 @@ func (mb *tcpTransporter) connect() error {
 			conn = tls.Client(conn, mb.tlsConfig)
 		}
 		mb.conn = conn
-		// silent period
-		time.Sleep(mb.ConnectDelay)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(mb.ConnectDelay): //silent period
+		}
 	}
 	return nil
 }
