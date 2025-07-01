@@ -8,11 +8,13 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -231,6 +233,12 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 		// Send data
 		mb.logf("modbus: send % x", aduRequest)
 		if _, err = mb.conn.Write(aduRequest); err != nil {
+			if errors.Is(err, syscall.EPIPE) {
+				// If a "broken pipe" (EPIPE) error occurs, it means the remote side has closed the connection.
+				// In this case, we close our side of the connection as well, so that the next attempt will establish a new connection,
+				// because [mb.connect] only dials if [mb.conn] is nil
+				mb.close()
+			}
 			return
 		}
 
