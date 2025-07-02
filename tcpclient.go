@@ -238,8 +238,8 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 				// In this case, we close our side of the connection as well, so that the next attempt will establish a new connection,
 				// because [mb.connect] only dials if [mb.conn] is nil
 				mb.mu.Lock()
-				defer mb.mu.Unlock()
 				mb.close()
+				mb.mu.Unlock()
 			}
 			return
 		}
