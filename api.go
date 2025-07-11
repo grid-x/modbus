@@ -49,4 +49,13 @@ type Client interface {
 	//ReadFIFOQueue reads the contents of a First-In-First-Out (FIFO) queue
 	// of register in a remote device and returns FIFO value register.
 	ReadFIFOQueue(ctx context.Context, address uint16) (results []byte, err error)
+
+	// Byte access
+
+	// ReadDeviceIdentification reads the device identification objects using Modbus Function Code 0x2B (MEI type 0x0E).
+	// It supports Basic, Regular, and Extended identification requests, including handling multi-part responses via
+	// the "More Follows" field and iteratively fetching objects until all are received.
+	ReadDeviceIdentification(ctx context.Context, readDeviceIDCode ReadDeviceIDCode) (results [][]byte, err error)
+	// ReadDeviceIdentification behaves like ReadDeviceIdentification but with an Object ID offset
+	ReadDeviceIdentificationWithObjectIDOffset(ctx context.Context, readDeviceIDCode ReadDeviceIDCode, objectIDOffset int) (results [][]byte, err error)
 }
