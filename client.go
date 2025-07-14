@@ -505,6 +505,111 @@ func (mb *client) ReadFIFOQueue(ctx context.Context, address uint16) (results []
 	return
 }
 
+// Request:
+//
+//	Function code         : 1 byte (0x2B)
+//	MEI Type              : 1 byte (0x0E)
+//	Read Device ID Code   : 1 byte (01 for basic, 02 for regular, 03 for extended, 04 for specific)
+//	Object ID             : 1 byte (0x00 to 0xFF)
+//
+// Response:
+//
+//	Function code         : 1 byte (0x2B)
+//	MEI Type              : 1 byte (0x0E)
+//	Read Device ID Code   : 1 byte (01 for basic, 02 for regular, 03 for extended, 04 for specific)
+//	Conformity level 	  : 1 byte (0x01 / 0x02 / 0x03 / 0x81 / 0x82 / 0x83)
+//	More Follows          : 1 byte (0x00 for no, 0xFF for yes)
+//	Next Object ID        : 1 byte
+//	Number of Objects     : 1 byte
+//	List of (length = Number of Objects):
+//		Object ID         : 1 byte
+//		Object length     : 1 byte
+//		Object value      : Object length (see above)
+func (mb *client) ReadDeviceIdentification(ctx context.Context, readDeviceIDCode ReadDeviceIDCode) (results [][]byte, err error) {
+	return mb.ReadDeviceIdentificationWithObjectIDOffset(ctx, readDeviceIDCode, 0)
+}
+
+func (mb *client) ReadDeviceIdentificationWithObjectIDOffset(ctx context.Context, readDeviceIDCode ReadDeviceIDCode, objectIDOffset int) (results [][]byte, err error) {
+	var objectID byte
+	switch readDeviceIDCode {
+	case ReadDeviceIDCodeBasic:
+		objectID = 0x00
+	case ReadDeviceIDCodeRegular:
+		objectID = 0x03
+	case ReadDeviceIDCodeExtended:
+		objectID = 0x80
+	default:
+		return nil, fmt.Errorf("unsupported readDeviceIDCode %d", readDeviceIDCode)
+	}
+
+	objectID += byte(objectIDOffset)
+
+	return mb.readDeviceIdentificationWithObjectID(ctx, readDeviceIDCode, objectID)
+}
+
+func (mb *client) readDeviceIdentificationWithObjectID(ctx context.Context, readDeviceIDCode ReadDeviceIDCode, objectID byte) (results [][]byte, err error) {
+	const meiType = meiTypeReadDeviceIdentification
+
+	request := ProtocolDataUnit{
+		FunctionCode: FuncCodeReadDeviceIdentification,
+		Data:         []byte{byte(meiType), byte(readDeviceIDCode), objectID},
+	}
+
+	response, err := mb.send(ctx, &request)
+	if err != nil {
+		return nil, err
+	}
+
+	if got, want := len(response.Data), 6; got < want {
+		return nil, fmt.Errorf("missing required headers, got %d, want %d", got, want)
+	}
+
+	moreFollows := response.Data[3]
+	nextObjectID := response.Data[4]
+	numObjects := int(response.Data[5])
+
+	offset := 5
+	for i := 0; i < numObjects; i++ {
+		// Object ID is not required
+		offset++
+
+		// Read object length
+		offset++
+		if len(response.Data)-1 < offset {
+			return nil, fmt.Errorf("missing object length for object #%d", i)
+		}
+		objectLength := response.Data[offset]
+
+		// Read object value
+		offset++
+		end := offset + int(objectLength)
+		if len(response.Data) < end {
+			return nil, fmt.Errorf("data too short to read object #%d at index %d", i, end)
+		}
+		objectValue := response.Data[offset:end]
+
+		// Set new offset for next iteration
+		offset = end - 1
+
+		results = append(results, objectValue)
+	}
+
+	if moreFollows != 0xFF {
+		return results, nil
+	}
+
+	if nextObjectID == 0x00 {
+		return results, nil
+	}
+
+	nextResults, err := mb.readDeviceIdentificationWithObjectID(ctx, readDeviceIDCode, nextObjectID)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(results, nextResults...), nil
+}
+
 // Helpers
 
 // send sends request and checks possible exception in the response.

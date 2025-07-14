@@ -36,6 +36,32 @@ const (
 	FuncCodeMaskWriteRegister = 22
 	// FuncCodeReadFIFOQueue 16-bit wise access
 	FuncCodeReadFIFOQueue = 24
+	// FuncCodeReadDeviceIdentification for byte wise access
+	FuncCodeReadDeviceIdentification = 43
+)
+
+// meiType specifies a MEI Type as defined in https://www.modbus.org/docs/Modbus_Application_Protocol_V1_1b.pdf#page=44
+type meiType byte
+
+const (
+	// meiTypeReadDeviceIdentification is used together with FuncCodeReadDeviceIdentification
+	meiTypeReadDeviceIdentification meiType = 14
+)
+
+// ReadDeviceIDCode specifies a Read Device ID Code as defined in https://www.modbus.org/docs/Modbus_Application_Protocol_V1_1b.pdf#page=45
+type ReadDeviceIDCode byte
+
+const (
+	// ReadDeviceIDCodeBasic queries for VendorName, ProductCode, and MajorMinorRevision.
+	ReadDeviceIDCodeBasic ReadDeviceIDCode = iota + 1
+
+	// ReadDeviceIDCodeRegular queries for VendorURL, ProductName, ModelName, and UserApplicationName.
+	ReadDeviceIDCodeRegular
+
+	// ReadDeviceIDCodeExtended queries for regular and private (custom) objects.
+	ReadDeviceIDCodeExtended
+
+	// ReadDeviceIDCodeSpecific // Currently unsupported
 )
 
 const (
