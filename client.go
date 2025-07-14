@@ -525,11 +525,11 @@ func (mb *client) ReadFIFOQueue(ctx context.Context, address uint16) (results []
 //		Object ID         : 1 byte
 //		Object length     : 1 byte
 //		Object value      : Object length (see above)
-func (mb *client) ReadDeviceIdentification(ctx context.Context, readDeviceIDCode ReadDeviceIDCode) (results [][]byte, err error) {
+func (mb *client) ReadDeviceIdentification(ctx context.Context, readDeviceIDCode ReadDeviceIDCode) (map[byte][]byte, error) {
 	return mb.ReadDeviceIdentificationWithObjectIDOffset(ctx, readDeviceIDCode, 0)
 }
 
-func (mb *client) ReadDeviceIdentificationWithObjectIDOffset(ctx context.Context, readDeviceIDCode ReadDeviceIDCode, objectIDOffset int) (results [][]byte, err error) {
+func (mb *client) ReadDeviceIdentificationWithObjectIDOffset(ctx context.Context, readDeviceIDCode ReadDeviceIDCode, objectIDOffset int) (map[byte][]byte, error) {
 	var objectID byte
 	switch readDeviceIDCode {
 	case ReadDeviceIDCodeBasic:
@@ -547,7 +547,7 @@ func (mb *client) ReadDeviceIdentificationWithObjectIDOffset(ctx context.Context
 	return mb.readDeviceIdentificationWithObjectID(ctx, readDeviceIDCode, objectID)
 }
 
-func (mb *client) readDeviceIdentificationWithObjectID(ctx context.Context, readDeviceIDCode ReadDeviceIDCode, objectID byte) (results [][]byte, err error) {
+func (mb *client) readDeviceIdentificationWithObjectID(ctx context.Context, readDeviceIDCode ReadDeviceIDCode, objectID byte) (map[byte][]byte, error) {
 	const meiType = meiTypeReadDeviceIdentification
 
 	request := ProtocolDataUnit{
@@ -564,14 +564,16 @@ func (mb *client) readDeviceIdentificationWithObjectID(ctx context.Context, read
 		return nil, fmt.Errorf("missing required headers, got %d, want %d", got, want)
 	}
 
+	results := make(map[byte][]byte)
+
 	moreFollows := response.Data[3]
 	nextObjectID := response.Data[4]
 	numObjects := int(response.Data[5])
 
 	offset := 5
 	for i := 0; i < numObjects; i++ {
-		// Object ID is not required
 		offset++
+		objectID := response.Data[offset]
 
 		// Read object length
 		offset++
@@ -591,7 +593,7 @@ func (mb *client) readDeviceIdentificationWithObjectID(ctx context.Context, read
 		// Set new offset for next iteration
 		offset = end - 1
 
-		results = append(results, objectValue)
+		results[objectID] = objectValue
 	}
 
 	if moreFollows != 0xFF {
@@ -607,7 +609,11 @@ func (mb *client) readDeviceIdentificationWithObjectID(ctx context.Context, read
 		return nil, err
 	}
 
-	return append(results, nextResults...), nil
+	for key, val := range nextResults {
+		results[key] = val
+	}
+
+	return results, nil
 }
 
 // Helpers

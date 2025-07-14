@@ -128,10 +128,7 @@ func main() {
 	var res string
 	switch *fnCode {
 	case modbus.FuncCodeReadDeviceIdentification:
-		results := bytes.Split(result, []byte{'\n'})
-		for i, result := range results {
-			res += fmt.Sprintf("ObjectID[%d]: %s\n", i, string(result))
-		}
+		res = string(result)
 	default:
 		switch *pType {
 		case "raw":
@@ -211,7 +208,9 @@ func exec(
 		if err != nil {
 			return nil, err
 		}
-		result = bytes.Join(objects, []byte("\n"))
+		for key, val := range objects {
+			result = append(result, []byte(fmt.Sprintf("Object ID %d = %s\n", key, val))...)
+		}
 	default:
 		err = fmt.Errorf("function code %d is unsupported", fnCode)
 	}
