@@ -275,6 +275,8 @@ func convertToBytes(eType string, order binary.ByteOrder, forcedOrder string, va
 		buf = w.ToFloat32(float32(val))
 	case "float64":
 		buf = w.ToFloat64(float64(val))
+	default:
+		err = fmt.Errorf("unsupported conversion type %s", eType)
 	}
 
 	// flip bytes when CDAB or BADC are used (and we have 4 bytes)
