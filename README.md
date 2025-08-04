@@ -18,6 +18,9 @@ Bit access:
 - Mask Write Register
 - Read FIFO Queue
 
+Device identification:
+- Read Device Identification (Function Code 0x2B)
+
 # Supported formats
 - TCP
 - Serial (RTU, ASCII)
@@ -53,6 +56,10 @@ client := modbus.NewClient(handler)
 results, err := client.ReadDiscreteInputs(ctx, 15, 2)
 results, err = client.WriteMultipleRegisters(ctx, 1, 2, []byte{0, 3, 0, 4})
 results, err = client.WriteMultipleCoils(ctx, 5, 10, []byte{4, 3})
+
+// Read device identification
+// Supported codes: ReadDeviceIDCodeBasic, ReadDeviceIDCodeRegular, ReadDeviceIDCodeExtended
+deviceInfo, err := client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCodeBasic)
 ```
 
 ```go
@@ -71,6 +78,10 @@ defer handler.Close()
 
 client := modbus.NewClient(handler)
 results, err := client.ReadDiscreteInputs(ctx, 15, 2)
+
+// Read device identification
+// Supported codes: ReadDeviceIDCodeBasic, ReadDeviceIDCodeRegular, ReadDeviceIDCodeExtended
+deviceInfo, err := client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCodeBasic)
 ```
 
 # Modbus-CLI
@@ -132,6 +143,12 @@ Write 1 register
 Write 2 registers
 ```sh
 ./modbus-cli -address=tcp://127.0.0.1:502 -fn-code=0x10 -type-exec=uint32 -register=42 -write-value=7
+```
+
+### Reading Device Identification
+Read basic device identification information using function code 43 (0x2B) and code 1 (ReadDeviceIDCodeBasic):
+```sh
+./modbus-cli -address=tcp://127.0.0.1:502 -fn-code=43 -device-id-code=1
 ```
 
 ## Release
