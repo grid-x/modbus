@@ -64,7 +64,6 @@ func main() {
 		filename         = flag.String("filename", "", "")
 		logframe         = flag.Bool("log-frame", false, "prints received and send modbus frame to stdout")
 		readDeviceIDCode = flag.Int("device-id-code", 0x01, "Read Device ID Code (01 for basic, 02 for regular, 03 for extended, 04 for specific)")
-		objectIDOffset   = flag.Int("object-id-offset", 0, "Starting Object ID offset for device identification")
 	)
 
 	flag.Parse()
@@ -117,7 +116,7 @@ func main() {
 
 	client := modbus.NewClient(handler)
 
-	result, err := exec(ctx, client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity, *readDeviceIDCode, *objectIDOffset)
+	result, err := exec(ctx, client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity, *readDeviceIDCode)
 	if err != nil && strings.Contains(err.Error(), "crc") && *ignoreCRCError {
 		logger.Info("ignoring crc error: %+v\n", err)
 	} else if err != nil {
@@ -168,7 +167,6 @@ func exec(
 	etype string,
 	quantity int,
 	readDeviceIDCode int,
-	objectIDOffset int,
 ) ([]byte, error) {
 	var err error
 	var result []byte
@@ -204,7 +202,7 @@ func exec(
 	case 0x03:
 		result, err = client.ReadHoldingRegisters(ctx, uint16(register), uint16(quantity))
 	case modbus.FuncCodeReadDeviceIdentification:
-		objects, err := client.ReadDeviceIdentificationWithObjectIDOffset(ctx, modbus.ReadDeviceIDCode(readDeviceIDCode), objectIDOffset)
+		objects, err := client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCode(readDeviceIDCode))
 		if err != nil {
 			return nil, err
 		}
