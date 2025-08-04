@@ -526,10 +526,6 @@ func (mb *client) ReadFIFOQueue(ctx context.Context, address uint16) (results []
 //		Object length     : 1 byte
 //		Object value      : Object length (see above)
 func (mb *client) ReadDeviceIdentification(ctx context.Context, readDeviceIDCode ReadDeviceIDCode) (map[byte][]byte, error) {
-	return mb.ReadDeviceIdentificationWithObjectIDOffset(ctx, readDeviceIDCode, 0)
-}
-
-func (mb *client) ReadDeviceIdentificationWithObjectIDOffset(ctx context.Context, readDeviceIDCode ReadDeviceIDCode, objectIDOffset int) (map[byte][]byte, error) {
 	var objectID byte
 	switch readDeviceIDCode {
 	case ReadDeviceIDCodeBasic:
@@ -541,8 +537,6 @@ func (mb *client) ReadDeviceIdentificationWithObjectIDOffset(ctx context.Context
 	default:
 		return nil, fmt.Errorf("unsupported readDeviceIDCode %d", readDeviceIDCode)
 	}
-
-	objectID += byte(objectIDOffset)
 
 	return mb.readDeviceIdentificationWithObjectID(ctx, readDeviceIDCode, objectID)
 }
