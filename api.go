@@ -56,4 +56,6 @@ type Client interface {
 	// It supports Basic, Regular, and Extended identification requests, including handling multi-part responses via
 	// the "More Follows" field and iteratively fetching objects until all are received.
 	ReadDeviceIdentification(ctx context.Context, readDeviceIDCode ReadDeviceIDCode) (results map[byte][]byte, err error)
+	// ReadDeviceIdentificationSpecificObject reads a specific device identification object.
+	ReadDeviceIdentificationSpecificObject(ctx context.Context, objectID byte) (results map[byte][]byte, err error)
 }
