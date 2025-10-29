@@ -541,6 +541,20 @@ func (mb *client) ReadDeviceIdentification(ctx context.Context, readDeviceIDCode
 	return mb.readDeviceIdentificationWithObjectID(ctx, readDeviceIDCode, objectID)
 }
 
+// Request:
+//
+//	Function code         : 1 byte (0x2B)
+//	MEI Type              : 1 byte (0x0E)
+//	Read Device ID Code   : 1 byte (04 for specific)
+//	Object ID             : 1 byte (0x00 to 0xFF)
+//
+// Response:
+//
+//	(see above)
+func (mb *client) ReadDeviceIdentificationSpecificObject(ctx context.Context, objectID byte) (map[byte][]byte, error) {
+	return mb.readDeviceIdentificationWithObjectID(ctx, ReadDeviceIDCodeSpecific, objectID)
+}
+
 func (mb *client) readDeviceIdentificationWithObjectID(ctx context.Context, readDeviceIDCode ReadDeviceIDCode, objectID byte) (map[byte][]byte, error) {
 	const meiType = meiTypeReadDeviceIdentification
 

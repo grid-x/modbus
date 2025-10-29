@@ -61,7 +61,8 @@ const (
 	// ReadDeviceIDCodeExtended queries for regular and private (custom) objects.
 	ReadDeviceIDCodeExtended
 
-	// ReadDeviceIDCodeSpecific // Currently unsupported
+	// ReadDeviceIDCodeSpecific queries for specific objects.
+	ReadDeviceIDCodeSpecific
 )
 
 const (

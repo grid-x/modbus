@@ -60,6 +60,8 @@ results, err = client.WriteMultipleCoils(ctx, 5, 10, []byte{4, 3})
 // Read device identification
 // Supported codes: ReadDeviceIDCodeBasic, ReadDeviceIDCodeRegular, ReadDeviceIDCodeExtended
 deviceInfo, err := client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCodeBasic)
+// Or for reading a specific object: ReadDeviceIDCodeSpecific
+deviceInfo, err := client.ReadDeviceIdentificationSpecificObject(ctx, 0)
 ```
 
 ```go
@@ -82,6 +84,8 @@ results, err := client.ReadDiscreteInputs(ctx, 15, 2)
 // Read device identification
 // Supported codes: ReadDeviceIDCodeBasic, ReadDeviceIDCodeRegular, ReadDeviceIDCodeExtended
 deviceInfo, err := client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCodeBasic)
+// Or for reading a specific object: ReadDeviceIDCodeSpecific
+deviceInfo, err := client.ReadDeviceIdentificationSpecificObject(ctx, 0)
 ```
 
 # Modbus-CLI
