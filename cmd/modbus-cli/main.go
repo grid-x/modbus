@@ -50,20 +50,21 @@ func main() {
 	flag.BoolVar(&opt.rtu.rs485.rxDuringTx, "rs485-rxDuringTx", false, "Allow bidirectional rx during tx")
 
 	var (
-		register         = flag.Int("register", -1, "")
-		fnCode           = flag.Int("fn-code", 0x03, "fn")
-		quantity         = flag.Int("quantity", 2, "register quantity, length in bytes")
-		ignoreCRCError   = flag.Bool("ignore-crc", false, "ignore crc")
-		eType            = flag.String("type-exec", "uint16", "")
-		pType            = flag.String("type-parse", "raw", "type to parse the register result. Use 'raw' if you want to see the raw bits and bytes. Use 'all' if you want to decode the result to different commonly used formats.")
-		writeValue       = flag.Float64("write-value", math.MaxFloat64, "")
-		readParseOrder   = flag.String("read-parse-order", "", "order to parse the register that was read out. Valid values: [AB, BA, ABCD, DCBA, BADC, CDAB]. Can only be used for 16bit (1 register) and 32bit (2 registers). If used, it will overwrite the big-endian or little-endian parameter.")
-		writeParseOrder  = flag.String("write-exec-order", "", "order to execute the register(s) that should be written to. Valid values: [AB, BA, ABCD, DCBA, BADC, CDAB]. Can only be used for 16bit (1 register) and 32bit (2 registers). If used, it will overwrite the big-endian or little-endian parameter.")
-		parseBigEndian   = flag.Bool("order-parse-bigendian", true, "t: big, f: little")
-		execBigEndian    = flag.Bool("order-exec-bigendian", true, "t: big, f: little")
-		filename         = flag.String("filename", "", "")
-		logframe         = flag.Bool("log-frame", false, "prints received and send modbus frame to stdout")
-		readDeviceIDCode = flag.Int("device-id-code", 0x01, "Read Device ID Code (01 for basic, 02 for regular, 03 for extended, 04 for specific)")
+		register           = flag.Int("register", -1, "")
+		fnCode             = flag.Int("fn-code", 0x03, "fn")
+		quantity           = flag.Int("quantity", 2, "register quantity, length in bytes")
+		ignoreCRCError     = flag.Bool("ignore-crc", false, "ignore crc")
+		eType              = flag.String("type-exec", "uint16", "")
+		pType              = flag.String("type-parse", "raw", "type to parse the register result. Use 'raw' if you want to see the raw bits and bytes. Use 'all' if you want to decode the result to different commonly used formats.")
+		writeValue         = flag.Float64("write-value", math.MaxFloat64, "")
+		readParseOrder     = flag.String("read-parse-order", "", "order to parse the register that was read out. Valid values: [AB, BA, ABCD, DCBA, BADC, CDAB]. Can only be used for 16bit (1 register) and 32bit (2 registers). If used, it will overwrite the big-endian or little-endian parameter.")
+		writeParseOrder    = flag.String("write-exec-order", "", "order to execute the register(s) that should be written to. Valid values: [AB, BA, ABCD, DCBA, BADC, CDAB]. Can only be used for 16bit (1 register) and 32bit (2 registers). If used, it will overwrite the big-endian or little-endian parameter.")
+		parseBigEndian     = flag.Bool("order-parse-bigendian", true, "t: big, f: little")
+		execBigEndian      = flag.Bool("order-exec-bigendian", true, "t: big, f: little")
+		filename           = flag.String("filename", "", "")
+		logframe           = flag.Bool("log-frame", false, "prints received and send modbus frame to stdout")
+		readDeviceIDCode   = flag.Int("device-id-code", 0x01, "Read Device ID Code (01 for basic, 02 for regular, 03 for extended, 04 for specific)")
+		readDeviceIDObject = flag.Int("device-id-object", -1, "Read Device ID Object ID Code (0x00 - 0xFF)")
 	)
 
 	flag.Parse()
@@ -78,6 +79,13 @@ func main() {
 		if *register > math.MaxUint16 || *register < 0 {
 			intRegister := *register
 			logger.Error("invalid register value: " + strconv.Itoa(intRegister))
+			os.Exit(-1)
+		}
+	}
+
+	if *fnCode == modbus.FuncCodeReadDeviceIdentification && modbus.ReadDeviceIDCode(*readDeviceIDCode) == modbus.ReadDeviceIDCodeSpecific {
+		if *readDeviceIDObject > math.MaxUint8 || *readDeviceIDObject < 0 {
+			logger.Error("invalid object ID: " + strconv.Itoa(*readDeviceIDObject))
 			os.Exit(-1)
 		}
 	}
@@ -116,7 +124,7 @@ func main() {
 
 	client := modbus.NewClient(handler)
 
-	result, err := exec(ctx, client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity, *readDeviceIDCode)
+	result, err := exec(ctx, client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity, *readDeviceIDCode, *readDeviceIDObject)
 	if err != nil && strings.Contains(err.Error(), "crc") && *ignoreCRCError {
 		logger.Info("ignoring crc error: %+v\n", err)
 	} else if err != nil {
@@ -167,6 +175,7 @@ func exec(
 	etype string,
 	quantity int,
 	readDeviceIDCode int,
+	readDeviceIDObject int,
 ) ([]byte, error) {
 	var err error
 	var result []byte
@@ -202,7 +211,12 @@ func exec(
 	case 0x03:
 		result, err = client.ReadHoldingRegisters(ctx, uint16(register), uint16(quantity))
 	case modbus.FuncCodeReadDeviceIdentification:
-		objects, err := client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCode(readDeviceIDCode))
+		var objects map[byte][]byte
+		if modbus.ReadDeviceIDCode(readDeviceIDCode) == modbus.ReadDeviceIDCodeSpecific {
+			objects, err = client.ReadDeviceIdentificationSpecificObject(ctx, byte(readDeviceIDObject))
+		} else {
+			objects, err = client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCode(readDeviceIDCode))
+		}
 		if err != nil {
 			return nil, err
 		}
