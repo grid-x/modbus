@@ -202,16 +202,7 @@ func exec(
 	case 0x03:
 		result, err = client.ReadHoldingRegisters(ctx, uint16(register), uint16(quantity))
 	case modbus.FuncCodeReadDeviceIdentification:
-		var objects map[byte][]byte
-		if modbus.ReadDeviceIDCode(readDeviceIDCode) == modbus.ReadDeviceIDCodeSpecific {
-			if register < 0 || register > math.MaxUint8 {
-				err = fmt.Errorf("invalid register value: %d", register)
-				break
-			}
-			objects, err = client.ReadDeviceIdentificationSpecificObject(ctx, byte(register))
-		} else {
-			objects, err = client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCode(readDeviceIDCode))
-		}
+		objects, err := client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCode(readDeviceIDCode))
 		if err != nil {
 			return nil, err
 		}
