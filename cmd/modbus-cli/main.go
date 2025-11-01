@@ -26,7 +26,7 @@ import (
 func main() {
 	var opt option
 	// general
-	flag.StringVar(&opt.address, "address", "tcp://127.0.0.1:502", "Example: tcp://127.0.0.1:502, rtu:///dev/ttyUSB0")
+	flag.StringVar(&opt.address, "address", "tcp://127.0.0.1:502", "Example: tcp://127.0.0.1:502, rtu:///dev/ttyUSB0, rtutcp://127.0.0.1:502")
 	flag.IntVar(&opt.slaveID, "slaveID", 1, "Is used for intra-system routing purpose, typically for serial connections, TCP default 0xFF")
 	flag.DurationVar(&opt.timeout, "timeout", 20*time.Second, "Modbus connection timeout")
 	// tcp
@@ -558,6 +558,14 @@ func newHandler(o option) (modbus.ClientHandler, error) {
 	case "udp":
 		h := modbus.NewRTUOverUDPClientHandler(u.Host)
 		h.SlaveID = byte(o.slaveID)
+		h.Logger = o.logger
+		return h, nil
+	case "rtutcp":
+		h := modbus.NewRTUOverTCPClientHandler(u.Host)
+		h.Timeout = o.timeout
+		h.SlaveID = byte(o.slaveID)
+		h.LinkRecoveryTimeout = o.tcp.linkRecoveryTimeout
+		h.ProtocolRecoveryTimeout = o.tcp.protocolRecoveryTimeout
 		h.Logger = o.logger
 		return h, nil
 	}
