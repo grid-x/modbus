@@ -301,14 +301,6 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 			return
 		}
 		aduResponse, err = mb.processResponse(data[:])
-		if err == nil {
-			err = verify(aduRequest, aduResponse)
-			if err == nil {
-				mb.logf("modbus: recv % x\n", aduResponse)
-				return // everything is OK
-			}
-		}
-
 		if err == io.EOF || err == io.ErrUnexpectedEOF || err == syscall.ECONNRESET {
 			mb.logf("modbus: connection closed by remote side: %v", err)
 			// recovery disabled or deadline reached - report error
@@ -319,21 +311,13 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 			return
 		}
 
-		// no time left, report error
-		if time.Until(protocolDeadline) < 0 {
-			return
+		err = verify(aduRequest, aduResponse)
+		if err == nil {
+			mb.logf("modbus: recv % x\n", aduResponse)
+			return // everything is OK
 		}
 
-		switch v := err.(type) {
-		case ErrTCPHeaderLength:
-			if time.Until(protocolDeadline) < 0 {
-				// TCP header not OK - retry with another query
-				res = readResultRetry
-				return
-			}
-			// no time left, report error
-			return
-		case errTransactionIDMismatch:
+		if v, ok := err.(errTransactionIDMismatch); ok {
 			// the first condition check for a normal transaction id mismatch. The second part of the condition check for a wrap-around. If a wraparound is
 			// detected (last attempt is smaller than last success), the id can be higher than the last success or lower than the last attempt, but not both
 			if (v.got > mb.lastSuccessfulTransactionID && v.got < mb.lastAttemptedTransactionID) ||
@@ -344,20 +328,13 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 				// transactionId X is already in the buffer).
 				continue
 			}
-			if time.Until(protocolDeadline) < 0 {
-				// some other mismatch, still in time and protocol may recover - retry with another query
-				res = readResultRetry
-				return
-			}
-			return // no time left, report error
-		default:
-			if time.Until(protocolDeadline) < 0 {
-				// TCP header OK but modbus frame not - retry with another query
-				res = readResultRetry
-				return
-			}
-			return // no time left, report error
 		}
+		if mb.ProtocolRecoveryTimeout == 0 || time.Until(protocolDeadline) < 0 {
+			// some mismatch but still in time and protocol may recover - retry with another query
+			res = readResultRetry
+			return
+		}
+		return // no time left, report error
 	}
 }
 
