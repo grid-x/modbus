@@ -309,6 +309,16 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 			}
 		}
 
+		if err == io.EOF || err == io.ErrUnexpectedEOF || err == syscall.ECONNRESET {
+			mb.logf("modbus: connection closed by remote side: %v", err)
+			// recovery disabled or deadline reached - report error
+			if mb.LinkRecoveryTimeout == 0 || time.Until(recoveryDeadline) < 0 {
+				return
+			}
+			res = readResultCloseRetry
+			return
+		}
+
 		// no time left, report error
 		if time.Until(protocolDeadline) < 0 {
 			return
