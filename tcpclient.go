@@ -260,16 +260,15 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 		case readResultCloseRetry:
 			mb.logf("modbus: close connection and retry reading response, because of %v", err)
 			mb.close()
-			continue
-		}
-
-		mb.logf("modbus: close connection and retry, because of %v", err)
-
-		mb.close()
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(mb.LinkRecoveryTimeout):
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+				continue
+			}
+		default:
+			mb.logf("modbus: unhandled read result %v", res)
+			return nil, fmt.Errorf("modbus: unhandled read result %v", res)
 		}
 	}
 }
