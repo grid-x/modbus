@@ -214,6 +214,7 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 	linkRecoveryDeadline := time.Now().Add(mb.LinkRecoveryTimeout)
 	protocolRecoveryDeadline := time.Now().Add(mb.ProtocolRecoveryTimeout)
 
+	isPrevReadErr := false
 	for {
 		// Establish a new connection if not connected
 		if err = mb.connect(ctx); err != nil {
@@ -257,8 +258,19 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 			return
 		case readResultRetry:
 			mb.logf("modbus: retry reading response, because of %v", err)
-			continue
+			if isPrevReadErr {
+				// two read errors in a row - close connection to force with fresh transactions
+				mb.close()
+			}
+			isPrevReadErr = true
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+				continue
+			}
 		case readResultCloseRetry:
+			isPrevReadErr = false
 			mb.logf("modbus: close connection and retry reading response, because of %v", err)
 			mb.close()
 			select {
