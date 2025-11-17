@@ -298,13 +298,13 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 		}
 
 		// no time left, report error
-		if time.Until(protocolDeadline) >= 0 {
+		if time.Until(protocolDeadline) < 0 {
 			return
 		}
 
 		switch v := err.(type) {
 		case ErrTCPHeaderLength:
-			if mb.LinkRecoveryTimeout > 0 {
+			if time.Until(protocolDeadline) < 0 {
 				// TCP header not OK - retry with another query
 				res = readResultRetry
 				return
@@ -322,21 +322,20 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 				// transactionId X is already in the buffer).
 				continue
 			}
-			if mb.ProtocolRecoveryTimeout > 0 {
+			if time.Until(protocolDeadline) < 0 {
 				// some other mismatch, still in time and protocol may recover - retry with another query
 				res = readResultRetry
 				return
 			}
 			return // no time left, report error
 		default:
-			if mb.ProtocolRecoveryTimeout > 0 {
+			if time.Until(protocolDeadline) < 0 {
 				// TCP header OK but modbus frame not - retry with another query
 				res = readResultRetry
 				return
 			}
 			return // no time left, report error
 		}
-
 	}
 }
 
