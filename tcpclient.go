@@ -211,7 +211,8 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 	}
 
 	var data [tcpMaxLength]byte
-	recoveryDeadline := time.Now().Add(mb.LinkRecoveryTimeout)
+	linkRecoveryDeadline := time.Now().Add(mb.LinkRecoveryTimeout)
+	protocolRecoveryDeadline := time.Now().Add(mb.ProtocolRecoveryTimeout)
 
 	for {
 		// Establish a new connection if not connected
@@ -244,9 +245,9 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 
 		mb.lastAttemptedTransactionID = binary.BigEndian.Uint16(aduRequest)
 		var res readResult
-		aduResponse, res, err = mb.readResponse(aduRequest, data[:], recoveryDeadline)
+		aduResponse, res, err = mb.readResponse(aduRequest, data[:], linkRecoveryDeadline, protocolRecoveryDeadline)
 		if err != nil {
-			mb.logf("modbus: read response error: %v", err)
+			mb.logf("modbus: read response error: %v, res: %v", err, res)
 		}
 		switch res {
 		case readResultDone:
@@ -273,7 +274,7 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 	}
 }
 
-func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryDeadline time.Time) (aduResponse []byte, res readResult, err error) {
+func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryDeadline time.Time, protocolDeadline time.Time) (aduResponse []byte, res readResult, err error) {
 	// res is readResultDone by default, which either means we succeeded or err contains the fatal error
 	for {
 		if _, err = io.ReadFull(mb.conn, data[:tcpHeaderSize]); err != nil {
@@ -297,7 +298,7 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 		}
 
 		// no time left, report error
-		if time.Since(recoveryDeadline) >= 0 {
+		if time.Until(protocolDeadline) >= 0 {
 			return
 		}
 
