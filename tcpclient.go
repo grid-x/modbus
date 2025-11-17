@@ -211,7 +211,7 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 	}
 
 	var data [tcpMaxLength]byte
-	recoveryDeadline := time.Now().Add(mb.IdleTimeout)
+	recoveryDeadline := time.Now().Add(mb.LinkRecoveryTimeout)
 
 	for {
 		// Establish a new connection if not connected
@@ -245,6 +245,9 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 		mb.lastAttemptedTransactionID = binary.BigEndian.Uint16(aduRequest)
 		var res readResult
 		aduResponse, res, err = mb.readResponse(aduRequest, data[:], recoveryDeadline)
+		if err != nil {
+			mb.logf("modbus: read response error: %v", err)
+		}
 		switch res {
 		case readResultDone:
 			if err == nil {
@@ -252,6 +255,11 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 			}
 			return
 		case readResultRetry:
+			mb.logf("modbus: retry reading response, because of %v", err)
+			continue
+		case readResultCloseRetry:
+			mb.logf("modbus: close connection and retry reading response, because of %v", err)
+			mb.close()
 			continue
 		}
 
@@ -321,6 +329,9 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 		} else if (err != io.EOF && err != io.ErrUnexpectedEOF) ||
 			mb.LinkRecoveryTimeout == 0 || time.Until(recoveryDeadline) < 0 {
 			return
+		}
+		if err != nil {
+			mb.logf("modbus: readresponse error: %v", err)
 		}
 		// any other error, but recovery deadline isn't reached yet - close and retry
 		res = readResultCloseRetry
