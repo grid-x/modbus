@@ -359,6 +359,10 @@ func (mb *tcpTransporter) processResponse(data []byte) (aduResponse []byte, err 
 		return
 	}
 	aduResponse = data[:length]
+	if len(aduResponse) == 0 {
+		err = io.EOF
+		return
+	}
 	return
 }
 
@@ -370,7 +374,30 @@ func (e errTransactionIDMismatch) Error() string {
 	return fmt.Sprintf("modbus: response transaction id '%v' does not match request '%v'", e.got, e.expected)
 }
 
+type errProtocolIDMismatch struct {
+	got, expected uint16
+}
+
+func (e errProtocolIDMismatch) Error() string {
+	return fmt.Sprintf("modbus: response protocol id '%v' does not match request '%v'", e.got, e.expected)
+}
+
+type errUnitIDMismatch struct {
+	got, expected byte
+}
+
+func (e errUnitIDMismatch) Error() string {
+	return fmt.Sprintf("modbus: response unit id '%v' does not match request '%v'", e.got, e.expected)
+}
+
 func verify(aduRequest []byte, aduResponse []byte) (err error) {
+	// len guard check for conversion
+	if len(aduRequest) < 2 {
+		return fmt.Errorf("modbus: invalid request frame length %d", len(aduRequest))
+	}
+	if len(aduResponse) < 2 {
+		return fmt.Errorf("modbus: invalid response frame length %d", len(aduResponse))
+	}
 	// Transaction id
 	responseVal := binary.BigEndian.Uint16(aduResponse)
 	requestVal := binary.BigEndian.Uint16(aduRequest)
@@ -382,12 +409,12 @@ func verify(aduRequest []byte, aduResponse []byte) (err error) {
 	responseVal = binary.BigEndian.Uint16(aduResponse[2:])
 	requestVal = binary.BigEndian.Uint16(aduRequest[2:])
 	if responseVal != requestVal {
-		err = fmt.Errorf("modbus: response protocol id '%v' does not match request '%v'", responseVal, requestVal)
+		err = errProtocolIDMismatch{got: responseVal, expected: requestVal}
 		return
 	}
 	// Unit id (1 byte)
 	if aduResponse[6] != aduRequest[6] {
-		err = fmt.Errorf("modbus: response unit id '%v' does not match request '%v'", aduResponse[6], aduRequest[6])
+		err = errUnitIDMismatch{got: aduResponse[6], expected: aduRequest[6]}
 		return
 	}
 	return
