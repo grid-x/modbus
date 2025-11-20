@@ -162,5 +162,11 @@ The generated files can be found in the directory in the `dist` directory.
 
 Take the `.tar.gz` and `.zip` files and create a new GitHub release.
 
+## Versioning
+
+Prior to `v1.4.1` this module used version tags like `v1.3`
+Starting with `v1.4.1` we follow full Semantic Versioning, including the patch component.
+Existing tags remain unchanged for compatibility.
+
 # References
 - [Modbus Specifications and Implementation Guides](http://www.modbus.org/specs.php)
