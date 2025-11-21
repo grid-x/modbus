@@ -288,54 +288,50 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 			}
 			return
 		}
-		aduResponse, err = mb.processResponse(data[:])
-		if err == nil {
-			err = verify(aduRequest, aduResponse)
-			if err == nil {
-				mb.logf("modbus: recv % x\n", aduResponse)
-				return // everything is OK
+		aduResponse, err = mb.processResponse(data[:]) // this also does io
+		if err != nil {
+			// recovery disabled or deadline reached - report error
+			if mb.LinkRecoveryTimeout == 0 || time.Until(recoveryDeadline) < 0 {
+				return
 			}
-		}
-
-		// no time left, report error
-		if time.Until(protocolDeadline) >= 0 {
-			return
-		}
-
-		switch v := err.(type) {
-		case ErrTCPHeaderLength:
-			if mb.LinkRecoveryTimeout > 0 {
+			if err == io.EOF || err == io.ErrUnexpectedEOF || err == syscall.ECONNRESET {
+				mb.logf("modbus: connection closed by remote side: %v", err)
+				res = readResultCloseRetry
+				return
+			}
+			if _, ok := err.(ErrTCPHeaderLength); ok {
 				// TCP header not OK - retry with another query
 				res = readResultRetry
 				return
 			}
-			// no time left, report error
+			// other error - report
 			return
-		case errTransactionIDMismatch:
-			// the first condition check for a normal transaction id mismatch. The second part of the condition check for a wrap-around. If a wraparound is
-			// detected (last attempt is smaller than last success), the id can be higher than the last success or lower than the last attempt, but not both
-			if (v.got > mb.lastSuccessfulTransactionID && v.got < mb.lastAttemptedTransactionID) ||
-				(mb.lastAttemptedTransactionID < mb.lastSuccessfulTransactionID && (v.got > mb.lastSuccessfulTransactionID || v.got < mb.lastAttemptedTransactionID)) {
-				// most likely, we simply had a timeout for the earlier query and now read the (late) response. Ignore it
-				// and assume that the response will come *without* sending another query. (If we send another query
-				// with transactionId X+1 here, we would again get a transactionMismatchError if the response to
-				// transactionId X is already in the buffer).
-				continue
-			}
-			if mb.ProtocolRecoveryTimeout > 0 {
-				// some other mismatch, still in time and protocol may recover - retry with another query
-				res = readResultRetry
-				return
-			}
-			return // no time left, report error
-		default:
-			if mb.ProtocolRecoveryTimeout > 0 {
-				// TCP header OK but modbus frame not - retry with another query
-				res = readResultRetry
-				return
-			}
-			return // no time left, report error
 		}
+
+		err = verify(aduRequest, aduResponse)
+		if err != nil {
+			mb.logf("modbus: verify error: %v", err)
+			// recovery disabled or deadline reached - report error
+			if mb.ProtocolRecoveryTimeout == 0 || time.Until(protocolDeadline) < 0 {
+				return
+			}
+			if v, ok := err.(errTransactionIDMismatch); ok {
+				if (v.got > mb.lastSuccessfulTransactionID && v.got < mb.lastAttemptedTransactionID) ||
+					(mb.lastAttemptedTransactionID < mb.lastSuccessfulTransactionID && (v.got > mb.lastSuccessfulTransactionID || v.got < mb.lastAttemptedTransactionID)) {
+					// most likely, we simply had a timeout for the earlier query and now read the (late) response. Ignore it
+					// and assume that the response will come *without* sending another query. (If we send another query
+					// with transactionId X+1 here, we would again get a transactionMismatchError if the response to
+					// transactionId X is already in the buffer).
+					continue
+				}
+				res = readResultRetry
+				return
+			}
+			// other error - report
+			return
+		}
+		mb.logf("modbus: recv % x\n", aduResponse)
+		return // everything is OK
 
 	}
 }
@@ -359,6 +355,10 @@ func (mb *tcpTransporter) processResponse(data []byte) (aduResponse []byte, err 
 		return
 	}
 	aduResponse = data[:length]
+	if len(aduResponse) == 0 {
+		err = io.EOF
+		return
+	}
 	return
 }
 
@@ -370,7 +370,32 @@ func (e errTransactionIDMismatch) Error() string {
 	return fmt.Sprintf("modbus: response transaction id '%v' does not match request '%v'", e.got, e.expected)
 }
 
+type errProtocolIDMismatch struct {
+	got, expected uint16
+}
+
+func (e errProtocolIDMismatch) Error() string {
+	return fmt.Sprintf("modbus: response protocol id '%v' does not match request '%v'", e.got, e.expected)
+}
+
+type errUnitIDMismatch struct {
+	got, expected byte
+}
+
+func (e errUnitIDMismatch) Error() string {
+	return fmt.Sprintf("modbus: response unit id '%v' does not match request '%v'", e.got, e.expected)
+}
+
+const sizeInt16 = 2
+
 func verify(aduRequest []byte, aduResponse []byte) (err error) {
+	// len guard check for conversion
+	if len(aduRequest) < sizeInt16 {
+		return ErrADURequestLength(len(aduRequest))
+	}
+	if len(aduResponse) < sizeInt16 {
+		return ErrADUResponseLength(len(aduResponse))
+	}
 	// Transaction id
 	responseVal := binary.BigEndian.Uint16(aduResponse)
 	requestVal := binary.BigEndian.Uint16(aduRequest)
@@ -382,12 +407,12 @@ func verify(aduRequest []byte, aduResponse []byte) (err error) {
 	responseVal = binary.BigEndian.Uint16(aduResponse[2:])
 	requestVal = binary.BigEndian.Uint16(aduRequest[2:])
 	if responseVal != requestVal {
-		err = fmt.Errorf("modbus: response protocol id '%v' does not match request '%v'", responseVal, requestVal)
+		err = errProtocolIDMismatch{got: responseVal, expected: requestVal}
 		return
 	}
 	// Unit id (1 byte)
 	if aduResponse[6] != aduRequest[6] {
-		err = fmt.Errorf("modbus: response unit id '%v' does not match request '%v'", aduResponse[6], aduRequest[6])
+		err = errUnitIDMismatch{got: aduResponse[6], expected: aduRequest[6]}
 		return
 	}
 	return
