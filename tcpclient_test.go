@@ -165,13 +165,12 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 	}()
 	handler := NewTCPClientHandler(ln.Addr().String())
 	handler.Timeout = 1 * time.Second
-
-	// set a short recovery timeout to iterate quickly
-	// but not too short to avoid flakiness
-	handler.ProtocolRecoveryTimeout = 500 * time.Millisecond
+	handler.ProtocolRecoveryTimeout = 50 * time.Millisecond
 
 	ctx := context.Background()
 	client := NewClient(handler)
+
+	// first two attempts should timeout
 	_, err = client.ReadInputRegisters(ctx, 0, 1)
 	opError, ok := err.(*net.OpError)
 	if !ok || !opError.Timeout() {
@@ -182,6 +181,11 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 	if !ok || !opError.Timeout() {
 		t.Fatalf("expected timeout error, got %q", err)
 	}
+
+	// Wait for the server to be ready
+	time.Sleep(500 * time.Millisecond)
+
+	// third attempt should succeed
 	resp, err := client.ReadInputRegisters(ctx, 0, 1)
 	if err != nil {
 		t.Fatal(err)
