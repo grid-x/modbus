@@ -386,14 +386,14 @@ func (e errUnitIDMismatch) Error() string {
 	return fmt.Sprintf("modbus: response unit id '%v' does not match request '%v'", e.got, e.expected)
 }
 
-const minADUResponseLength = 2
+const sizeInt16 = 2
 
 func verify(aduRequest []byte, aduResponse []byte) (err error) {
 	// len guard check for conversion
-	if len(aduRequest) < minADUResponseLength {
+	if len(aduRequest) < sizeInt16 {
 		return ErrADURequestLength(len(aduRequest))
 	}
-	if len(aduResponse) < minADUResponseLength {
+	if len(aduResponse) < sizeInt16 {
 		return ErrADUResponseLength(len(aduResponse))
 	}
 	// Transaction id
