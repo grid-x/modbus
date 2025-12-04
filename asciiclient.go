@@ -212,7 +212,7 @@ func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (
 			return
 		}
 		// Get the response
-		aduResponse, err = readAscii(mb.port, connDeadline)
+		aduResponse, err = readASCII(mb.port, connDeadline)
 		mb.logf("modbus: recv % x\n", aduResponse)
 		if err != nil {
 			if err == io.EOF || err == io.ErrUnexpectedEOF || err == syscall.ECONNRESET {
@@ -242,7 +242,7 @@ func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (
 	}
 }
 
-func readAscii(r io.Reader, deadline time.Time) ([]byte, error) {
+func readASCII(r io.Reader, deadline time.Time) ([]byte, error) {
 	var n, length int
 	var data [asciiMaxSize]byte
 	var err error
