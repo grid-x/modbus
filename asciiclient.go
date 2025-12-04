@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"syscall"
 	"time"
 )
 
@@ -181,17 +183,76 @@ func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (
 	mb.lastActivity = time.Now()
 	mb.startCloseTimer()
 
-	// Send the request
-	mb.logf("modbus: send % x\n", aduRequest)
-	if _, err = mb.port.Write(aduRequest); err != nil {
+	connDeadline := time.Now().Add(mb.Timeout)
+	linkRecoveryDeadline := time.Now().Add(mb.LinkRecoveryTimeout)
+
+	for {
+		// Send the request
+		mb.logf("modbus: send % x\n", aduRequest)
+		if _, err = mb.port.Write(aduRequest); err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF || err == syscall.ECONNRESET {
+				if time.Now().After(linkRecoveryDeadline) {
+					err = fmt.Errorf("modbus: link recovery timeout reached: %w", err)
+					return
+				}
+				// reconnect on connection reset
+				mb.logf("modbus: connection reset, reconnecting")
+				if cerr := mb.close(); cerr != nil {
+					mb.logf("modbus: error closing connection: %v", cerr)
+					return
+				}
+				if cerr := mb.connect(ctx); cerr != nil {
+					mb.logf("modbus: error reconnecting: %v", cerr)
+					return
+				}
+				// retry the communication
+				continue
+			}
+
+			return
+		}
+		// Get the response
+		aduResponse, err = readASCII(mb.port, connDeadline)
+		mb.logf("modbus: recv % x\n", aduResponse)
+		if err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF || err == syscall.ECONNRESET {
+				if time.Now().After(linkRecoveryDeadline) {
+					err = fmt.Errorf("modbus: link recovery timeout reached: %w", err)
+					return
+				}
+				// reconnect on connection reset
+				mb.logf("modbus: connection reset, reconnecting")
+				if cerr := mb.close(); cerr != nil {
+					mb.logf("modbus: error closing connection: %v", cerr)
+					return
+				}
+				if cerr := mb.connect(ctx); cerr != nil {
+					mb.logf("modbus: error reconnecting: %v", cerr)
+					return
+				}
+				// retry the communication
+				continue
+			}
+			// Unknown error
+			mb.logf("modbus: read error: %v", err)
+			return
+		}
+
 		return
 	}
-	// Get the response
+}
+
+func readASCII(r io.Reader, deadline time.Time) ([]byte, error) {
 	var n, length int
 	var data [asciiMaxSize]byte
+	var err error
+
 	for {
-		if n, err = mb.port.Read(data[length:]); err != nil {
-			return
+		if time.Now().After(deadline) {
+			return nil, context.DeadlineExceeded
+		}
+		if n, err = r.Read(data[length:]); err != nil {
+			return nil, err
 		}
 		length += n
 		if length >= asciiMaxSize || n == 0 {
@@ -204,9 +265,8 @@ func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (
 			}
 		}
 	}
-	aduResponse = data[:length]
-	mb.logf("modbus: recv % x\n", aduResponse)
-	return
+
+	return data[:length], nil
 }
 
 // writeHex encodes byte to string in hexadecimal, e.g. 0xA5 => "A5"
