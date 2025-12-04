@@ -25,8 +25,13 @@ type serialPort struct {
 	// Serial port configuration.
 	serial.Config
 
-	Logger      Logger
+	Logger Logger
+	// IdleTimeout is the duration to close the connection when no activity.
 	IdleTimeout time.Duration
+	// Silent period after successful connection
+	ConnectDelay time.Duration
+	// Recovery timeout if the connection is lost
+	LinkRecoveryTimeout time.Duration
 
 	mu sync.Mutex
 	// port is platform-dependent data structure for serial port.
@@ -52,9 +57,14 @@ func (mb *serialPort) connect(ctx context.Context) error {
 	if mb.port == nil {
 		port, err := serial.Open(&mb.Config)
 		if err != nil {
-			return fmt.Errorf("could not open %s: %w", mb.Config.Address, err)
+			return fmt.Errorf("could not open %s: %w", mb.Address, err)
 		}
 		mb.port = port
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(mb.ConnectDelay): //silent period
+		}
 	}
 	return nil
 }
@@ -103,6 +113,6 @@ func (mb *serialPort) closeIdle() {
 
 	if idle := time.Since(mb.lastActivity); idle >= mb.IdleTimeout {
 		mb.logf("modbus: closing connection due to idle timeout: %v", idle)
-		mb.close()
+		_ = mb.close()
 	}
 }
