@@ -10,12 +10,12 @@ import (
 func TestRTUEncodeDecode(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		packager := &rtuPackager{
-			SlaveID: rapid.Byte().Draw(t, "SlaveID").(byte),
+			SlaveID: rapid.Byte().Draw(t, "SlaveID"),
 		}
 
 		pdu := &ProtocolDataUnit{
-			FunctionCode: rapid.Byte().Draw(t, "FunctionCode").(byte),
-			Data:         rapid.SliceOf(rapid.Byte()).Draw(t, "Data").([]byte),
+			FunctionCode: rapid.Byte().Draw(t, "FunctionCode"),
+			Data:         rapid.SliceOf(rapid.Byte()).Draw(t, "Data"),
 		}
 
 		raw, err := packager.Encode(pdu)

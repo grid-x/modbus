@@ -5,6 +5,7 @@
 package modbus
 
 import (
+	"context"
 	"time"
 )
 
@@ -20,6 +21,7 @@ func NewASCIIOverTCPClientHandler(address string) *ASCIIOverTCPClientHandler {
 	handler.Address = address
 	handler.Timeout = tcpTimeout
 	handler.IdleTimeout = tcpIdleTimeout
+	handler.Dial = defaultDialFunc(handler.Timeout)
 	return handler
 }
 
@@ -34,24 +36,23 @@ type asciiTCPTransporter struct {
 	tcpTransporter
 }
 
-func (mb *asciiTCPTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+func (mb *asciiTCPTransporter) Send(ctx context.Context, aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
 	// Make sure port is connected
-	if err = mb.connect(); err != nil {
+	if err = mb.connect(ctx); err != nil {
 		return
 	}
 	// Start the timer to close when idle
 	mb.lastActivity = time.Now()
 	mb.startCloseTimer()
+
 	// Set write and read timeout
-	var timeout time.Time
 	if mb.Timeout > 0 {
-		timeout = mb.lastActivity.Add(mb.Timeout)
-	}
-	if err = mb.conn.SetDeadline(timeout); err != nil {
-		return
+		if err = mb.conn.SetDeadline(mb.lastActivity.Add(mb.Timeout)); err != nil {
+			return
+		}
 	}
 
 	// Send the request

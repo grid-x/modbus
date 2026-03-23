@@ -5,7 +5,9 @@
 package modbus
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -153,6 +155,11 @@ func (e *InvalidLengthError) Error() string {
 
 // readIncrementally reads incrementally
 func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Time) ([]byte, error) {
+	if r == nil {
+		return nil, fmt.Errorf("reader is nil")
+	}
+
+	buf := make([]byte, 1)
 	data := make([]byte, rtuMaxSize)
 
 	state := stateSlaveID
@@ -161,16 +168,13 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Ti
 
 	for {
 		if time.Now().After(deadline) { // Possible that serialport may spew data
-			return nil, fmt.Errorf("failed to read from serial port within deadline")
+			return nil, errors.New("failed to read from serial port within deadline")
 		}
-		if r == nil {
-			return nil, fmt.Errorf("reader is nil")
-		}
-		buf := make([]byte, 1)
-		_, err := io.ReadAtLeast(r, buf, 1)
-		if err != nil {
+
+		if _, err := io.ReadAtLeast(r, buf, 1); err != nil {
 			return nil, err
 		}
+
 		switch state {
 		// expecting slaveID
 		case stateSlaveID:
@@ -248,12 +252,12 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Ti
 	}
 }
 
-func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+func (mb *rtuSerialTransporter) Send(ctx context.Context, aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
 	// Make sure port is connected
-	if err = mb.connect(); err != nil {
+	if err = mb.connect(ctx); err != nil {
 		return
 	}
 	// Start the timer to close when idle
@@ -268,7 +272,11 @@ func (mb *rtuSerialTransporter) Send(aduRequest []byte) (aduResponse []byte, err
 	// function := aduRequest[1]
 	// functionFail := aduRequest[1] & 0x80
 	bytesToRead := calculateResponseLength(aduRequest)
-	time.Sleep(mb.calculateDelay(len(aduRequest) + bytesToRead))
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(mb.calculateDelay(len(aduRequest) + bytesToRead)):
+	}
 
 	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.port, time.Now().Add(mb.Config.Timeout))
 	mb.logf("modbus: recv % x\n", data[:])
@@ -313,7 +321,8 @@ func calculateResponseLength(adu []byte) int {
 		length += 4
 	case FuncCodeMaskWriteRegister:
 		length += 6
-	case FuncCodeReadFIFOQueue:
+	case FuncCodeReadFIFOQueue,
+		FuncCodeReadDeviceIdentification:
 		// undetermined
 	default:
 	}

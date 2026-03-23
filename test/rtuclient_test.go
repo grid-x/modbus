@@ -5,8 +5,8 @@
 package test
 
 import (
+	"context"
 	"log"
-	"os"
 	"testing"
 
 	"github.com/grid-x/modbus"
@@ -30,19 +30,20 @@ func TestRTUClientAdvancedUsage(t *testing.T) {
 	handler.Parity = "E"
 	handler.StopBits = 1
 	handler.SlaveID = 11
-	handler.Logger = log.New(os.Stdout, "rtu: ", log.LstdFlags)
-	err := handler.Connect()
+	handler.Logger = log.Default()
+	ctx := context.Background()
+	err := handler.Connect(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer handler.Close()
 
 	client := modbus.NewClient(handler)
-	results, err := client.ReadDiscreteInputs(15, 2)
+	results, err := client.ReadDiscreteInputs(ctx, 15, 2)
 	if err != nil || results == nil {
 		t.Fatal(err, results)
 	}
-	results, err = client.ReadWriteMultipleRegisters(0, 2, 2, 2, []byte{1, 2, 3, 4})
+	results, err = client.ReadWriteMultipleRegisters(ctx, 0, 2, 2, 2, []byte{1, 2, 3, 4})
 	if err != nil || results == nil {
 		t.Fatal(err, results)
 	}

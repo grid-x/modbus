@@ -18,9 +18,13 @@ Bit access:
 - Mask Write Register
 - Read FIFO Queue
 
+Device identification:
+- Read Device Identification (Function Code 0x2B)
+
 # Supported formats
 - TCP
 - Serial (RTU, ASCII)
+- UDP
 
 # Usage
 Basic usage:
@@ -28,12 +32,12 @@ Basic usage:
 // Modbus TCP
 client := modbus.TCPClient("localhost:502")
 // Read input register 9
-results, err := client.ReadInputRegisters(8, 1)
+results, err := client.ReadInputRegisters(context.Background(), 8, 1)
 
 // Modbus RTU/ASCII
 // Default configuration is 19200, 8, 1, even
 client = modbus.RTUClient("/dev/ttyS0")
-results, err = client.ReadCoils(2, 1)
+results, err = client.ReadCoils(context.Background(), 2, 1)
 ```
 
 Advanced usage:
@@ -43,14 +47,21 @@ handler := modbus.NewTCPClientHandler("localhost:502")
 handler.Timeout = 10 * time.Second
 handler.SlaveID = 0xFF
 handler.Logger = log.New(os.Stdout, "test: ", log.LstdFlags)
+ctx := context.Background()
 // Connect manually so that multiple requests are handled in one connection session
-err := handler.Connect()
+err := handler.Connect(ctx)
 defer handler.Close()
 
 client := modbus.NewClient(handler)
-results, err := client.ReadDiscreteInputs(15, 2)
-results, err = client.WriteMultipleRegisters(1, 2, []byte{0, 3, 0, 4})
-results, err = client.WriteMultipleCoils(5, 10, []byte{4, 3})
+results, err := client.ReadDiscreteInputs(ctx, 15, 2)
+results, err = client.WriteMultipleRegisters(ctx, 1, 2, []byte{0, 3, 0, 4})
+results, err = client.WriteMultipleCoils(ctx, 5, 10, []byte{4, 3})
+
+// Read device identification
+// Supported codes: ReadDeviceIDCodeBasic, ReadDeviceIDCodeRegular, ReadDeviceIDCodeExtended
+deviceInfo, err := client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCodeBasic)
+// Or for reading a specific object: ReadDeviceIDCodeSpecific
+deviceInfo, err := client.ReadDeviceIdentificationSpecificObject(ctx, 0)
 ```
 
 ```go
@@ -63,11 +74,18 @@ handler.StopBits = 1
 handler.SlaveID = 1
 handler.Timeout = 5 * time.Second
 
-err := handler.Connect()
+ctx := context.Background()
+err := handler.Connect(ctx)
 defer handler.Close()
 
 client := modbus.NewClient(handler)
-results, err := client.ReadDiscreteInputs(15, 2)
+results, err := client.ReadDiscreteInputs(ctx, 15, 2)
+
+// Read device identification
+// Supported codes: ReadDeviceIDCodeBasic, ReadDeviceIDCodeRegular, ReadDeviceIDCodeExtended
+deviceInfo, err := client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCodeBasic)
+// Or for reading a specific object: ReadDeviceIDCodeSpecific
+deviceInfo, err := client.ReadDeviceIdentificationSpecificObject(ctx, 0)
 ```
 
 # Modbus-CLI
@@ -81,6 +99,12 @@ For Modbus RTU, replace the address field and use the `rtu-` arguments in order 
 ```sh
 ./modbus-cli -address=rtu:///dev/ttyUSB0 -rtu-baudrate=57600 -rtu-stopbits=2 -rtu-parity=N -rtu-databits=8 ...
 ```
+
+For Modbus UDP, replace the address field with a UDP address.
+```sh
+./modbus-cli --address=udp://127.0.0.1:502 ...
+```
+
 ### Reading Registers
 
 Read 1 register and get raw result
@@ -123,6 +147,12 @@ Write 1 register
 Write 2 registers
 ```sh
 ./modbus-cli -address=tcp://127.0.0.1:502 -fn-code=0x10 -type-exec=uint32 -register=42 -write-value=7
+```
+
+### Reading Device Identification
+Read basic device identification information using function code 43 (0x2B) and code 1 (ReadDeviceIDCodeBasic):
+```sh
+./modbus-cli -address=tcp://127.0.0.1:502 -fn-code=43 -device-id-code=1
 ```
 
 ## Release

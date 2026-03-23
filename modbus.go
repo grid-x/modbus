@@ -8,6 +8,7 @@ Package modbus provides a client for MODBUS TCP and RTU/ASCII.
 package modbus
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -35,6 +36,33 @@ const (
 	FuncCodeMaskWriteRegister = 22
 	// FuncCodeReadFIFOQueue 16-bit wise access
 	FuncCodeReadFIFOQueue = 24
+	// FuncCodeReadDeviceIdentification for byte wise access
+	FuncCodeReadDeviceIdentification = 43
+)
+
+// meiType specifies a MEI Type as defined in https://www.modbus.org/docs/Modbus_Application_Protocol_V1_1b.pdf#page=44
+type meiType byte
+
+const (
+	// meiTypeReadDeviceIdentification is used together with FuncCodeReadDeviceIdentification
+	meiTypeReadDeviceIdentification meiType = 14
+)
+
+// ReadDeviceIDCode specifies a Read Device ID Code as defined in https://www.modbus.org/docs/Modbus_Application_Protocol_V1_1b.pdf#page=45
+type ReadDeviceIDCode byte
+
+const (
+	// ReadDeviceIDCodeBasic queries for VendorName, ProductCode, and MajorMinorRevision.
+	ReadDeviceIDCodeBasic ReadDeviceIDCode = iota + 1
+
+	// ReadDeviceIDCodeRegular queries for VendorURL, ProductName, ModelName, and UserApplicationName.
+	ReadDeviceIDCodeRegular
+
+	// ReadDeviceIDCodeExtended queries for regular and private (custom) objects.
+	ReadDeviceIDCodeExtended
+
+	// ReadDeviceIDCodeSpecific queries for specific objects.
+	ReadDeviceIDCodeSpecific
 )
 
 const (
@@ -108,11 +136,11 @@ type Packager interface {
 
 // Transporter specifies the transport layer.
 type Transporter interface {
-	Send(aduRequest []byte) (aduResponse []byte, err error)
+	Send(ctx context.Context, aduRequest []byte) (aduResponse []byte, err error)
 }
 
 // Connector exposes the underlying handler capability for open/connect and close the transport channel.
 type Connector interface {
-	Connect() error
+	Connect(ctx context.Context) error
 	Close() error
 }

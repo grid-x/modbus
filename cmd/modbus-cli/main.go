@@ -2,32 +2,40 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"log"
+	"log/slog"
 	"math"
 	"net/url"
 	"os"
+	"os/signal"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
-	"github.com/grid-x/modbus"
 	"github.com/grid-x/serial"
+
+	"github.com/grid-x/modbus"
 )
 
 func main() {
 	var opt option
 	// general
-	flag.StringVar(&opt.address, "address", "tcp://127.0.0.1:502", "Example: tcp://127.0.0.1:502, rtu:///dev/ttyUSB0")
+	flag.StringVar(&opt.address, "address", "tcp://127.0.0.1:502", "Example: tcp://127.0.0.1:502, rtu:///dev/ttyUSB0, rtutcp://127.0.0.1:502")
 	flag.IntVar(&opt.slaveID, "slaveID", 1, "Is used for intra-system routing purpose, typically for serial connections, TCP default 0xFF")
 	flag.DurationVar(&opt.timeout, "timeout", 20*time.Second, "Modbus connection timeout")
 	// tcp
 	flag.DurationVar(&opt.tcp.linkRecoveryTimeout, "tcp-timeout-link-recovery", 20*time.Second, "Link timeout")
 	flag.DurationVar(&opt.tcp.protocolRecoveryTimeout, "tcp-timeout-protocol-recovery", 20*time.Second, "Proto timeout")
+	// tcp tls
+	flag.StringVar(&opt.tcp.certFile, "tcp-tls-cert", "", "TLS cert file")
+	flag.StringVar(&opt.tcp.keyFile, "tcp-tls-key", "", "TLS key file")
+	flag.BoolVar(&opt.tcp.insecure, "tcp-tls-insecure", false, "Skip TLS verifications of server certificate and host name")
 	// rtu
 	flag.IntVar(&opt.rtu.baudrate, "rtu-baudrate", 2400, "Symbol rate, e.g.: 300, 600, 1200, 2400, 4800, 9600, 19200, 38400")
 	flag.IntVar(&opt.rtu.dataBits, "rtu-databits", 8, "5, 6, 7 or 8")
@@ -42,19 +50,21 @@ func main() {
 	flag.BoolVar(&opt.rtu.rs485.rxDuringTx, "rs485-rxDuringTx", false, "Allow bidirectional rx during tx")
 
 	var (
-		register        = flag.Int("register", -1, "")
-		fnCode          = flag.Int("fn-code", 0x03, "fn")
-		quantity        = flag.Int("quantity", 2, "register quantity, length in bytes")
-		ignoreCRCError  = flag.Bool("ignore-crc", false, "ignore crc")
-		eType           = flag.String("type-exec", "uint16", "")
-		pType           = flag.String("type-parse", "raw", "type to parse the register result. Use 'raw' if you want to see the raw bits and bytes. Use 'all' if you want to decode the result to different commonly used formats.")
-		writeValue      = flag.Float64("write-value", math.MaxFloat64, "")
-		readParseOrder  = flag.String("read-parse-order", "", "order to parse the register that was read out. Valid values: [AB, BA, ABCD, DCBA, BADC, CDAB]. Can only be used for 16bit (1 register) and 32bit (2 registers). If used, it will overwrite the big-endian or little-endian parameter.")
-		writeParseOrder = flag.String("write-exec-order", "", "order to execute the register(s) that should be written to. Valid values: [AB, BA, ABCD, DCBA, BADC, CDAB]. Can only be used for 16bit (1 register) and 32bit (2 registers). If used, it will overwrite the big-endian or little-endian parameter.")
-		parseBigEndian  = flag.Bool("order-parse-bigendian", true, "t: big, f: little")
-		execBigEndian   = flag.Bool("order-exec-bigendian", true, "t: big, f: little")
-		filename        = flag.String("filename", "", "")
-		logframe        = flag.Bool("log-frame", false, "prints received and send modbus frame to stdout")
+		register           = flag.Int("register", -1, "")
+		fnCode             = flag.Int("fn-code", 0x03, "fn")
+		quantity           = flag.Int("quantity", 2, "register quantity, length in bytes")
+		ignoreCRCError     = flag.Bool("ignore-crc", false, "ignore crc")
+		eType              = flag.String("type-exec", "uint16", "")
+		pType              = flag.String("type-parse", "raw", "type to parse the register result. Use 'raw' if you want to see the raw bits and bytes. Use 'all' if you want to decode the result to different commonly used formats.")
+		writeValue         = flag.Float64("write-value", math.MaxFloat64, "")
+		readParseOrder     = flag.String("read-parse-order", "", "order to parse the register that was read out. Valid values: [AB, BA, ABCD, DCBA, BADC, CDAB]. Can only be used for 16bit (1 register) and 32bit (2 registers). If used, it will overwrite the big-endian or little-endian parameter.")
+		writeParseOrder    = flag.String("write-exec-order", "", "order to execute the register(s) that should be written to. Valid values: [AB, BA, ABCD, DCBA, BADC, CDAB]. Can only be used for 16bit (1 register) and 32bit (2 registers). If used, it will overwrite the big-endian or little-endian parameter.")
+		parseBigEndian     = flag.Bool("order-parse-bigendian", true, "t: big, f: little")
+		execBigEndian      = flag.Bool("order-exec-bigendian", true, "t: big, f: little")
+		filename           = flag.String("filename", "", "")
+		logframe           = flag.Bool("log-frame", false, "prints received and send modbus frame to stdout")
+		readDeviceIDCode   = flag.Int("device-id-code", 0x01, "Read Device ID Code (01 for basic, 02 for regular, 03 for extended, 04 for specific)")
+		readDeviceIDObject = flag.Int("device-id-object", -1, "Read Device ID Object ID Code (0x00 - 0xFF)")
 	)
 
 	flag.Parse()
@@ -64,15 +74,26 @@ func main() {
 		return
 	}
 
-	logger := log.New(os.Stdout, "", 0)
-	if *register > math.MaxUint16 || *register < 0 {
-		logger.Fatalf("invalid register value: %d", *register)
+	logger := slog.Default()
+	if *fnCode != modbus.FuncCodeReadDeviceIdentification {
+		if *register > math.MaxUint16 || *register < 0 {
+			intRegister := *register
+			logger.Error("invalid register value: " + strconv.Itoa(intRegister))
+			os.Exit(-1)
+		}
+	}
+
+	if *fnCode == modbus.FuncCodeReadDeviceIdentification && modbus.ReadDeviceIDCode(*readDeviceIDCode) == modbus.ReadDeviceIDCodeSpecific {
+		if *readDeviceIDObject > math.MaxUint8 || *readDeviceIDObject < 0 {
+			logger.Error("invalid object ID: " + strconv.Itoa(*readDeviceIDObject))
+			os.Exit(-1)
+		}
 	}
 
 	startReg := uint16(*register)
 
 	if *logframe {
-		opt.logger = logger
+		opt.logger = &debugAdapter{logger}
 	}
 
 	var (
@@ -89,47 +110,62 @@ func main() {
 
 	handler, err := newHandler(opt)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Error(err.Error())
+		os.Exit(-1)
 	}
-	if err := handler.Connect(); err != nil {
-		log.Fatal(err)
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+	if err := handler.Connect(ctx); err != nil {
+		logger.Error(err.Error())
+		os.Exit(-1)
 	}
 	defer handler.Close()
 
 	client := modbus.NewClient(handler)
 
-	result, err := exec(client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity)
+	result, err := exec(ctx, client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity, *readDeviceIDCode, *readDeviceIDObject)
 	if err != nil && strings.Contains(err.Error(), "crc") && *ignoreCRCError {
-		logger.Printf("ignoring crc error: %+v\n", err)
+		logger.Info("ignoring crc error: %+v\n", err)
 	} else if err != nil {
-		logger.Fatal(err)
+		logger.Error(err.Error())
+		os.Exit(-1)
 	}
 
 	var res string
-	switch *pType {
-	case "raw":
-		res, err = resultToRawString(result, int(startReg))
-	case "all":
-		res, err = resultToAllString(result)
+	switch *fnCode {
+	case modbus.FuncCodeReadDeviceIdentification:
+		res = string(result)
 	default:
-		res, err = resultToString(result, po, *readParseOrder, *pType)
+		switch *pType {
+		case "raw":
+			res, err = resultToRawString(result, int(startReg))
+		case "all":
+			res, err = resultToAllString(result)
+		default:
+			res, err = resultToString(result, po, *readParseOrder, *pType)
+		}
 	}
 
 	if err != nil {
-		logger.Fatal(err)
+		logger.Error(err.Error())
+		os.Exit(-1)
 	}
 
-	logger.Println(res)
+	logger.Info(res)
 
 	if *filename != "" {
 		if err := resultToFile([]byte(res), *filename); err != nil {
-			logger.Fatal(err)
+			logger.Error(err.Error())
+			os.Exit(-1)
 		}
-		logger.Printf("%s successfully written\n", *filename)
+		fName := *filename
+		logger.Info(fName + " successfully written\n")
 	}
 }
 
 func exec(
+	ctx context.Context,
 	client modbus.Client,
 	o binary.ByteOrder,
 	forcedOrder string,
@@ -138,12 +174,14 @@ func exec(
 	wval float64,
 	etype string,
 	quantity int,
+	readDeviceIDCode int,
+	readDeviceIDObject int,
 ) ([]byte, error) {
 	var err error
 	var result []byte
 	switch fnCode {
 	case 0x01:
-		result, err = client.ReadCoils(uint16(register), uint16(quantity))
+		result, err = client.ReadCoils(ctx, uint16(register), uint16(quantity))
 	case 0x05:
 		const (
 			coilOn  uint16 = 0xFF00
@@ -153,25 +191,38 @@ func exec(
 		if wval > 0 {
 			v = coilOn
 		}
-		result, err = client.WriteSingleCoil(uint16(register), v)
+		result, err = client.WriteSingleCoil(ctx, uint16(register), v)
 	case 0x06:
 		max := float64(math.MaxUint16)
 		if wval > max || wval < 0 {
 			err = fmt.Errorf("overflow: %f does not fit into datatype uint16", wval)
 			break
 		}
-		result, err = client.WriteSingleRegister(uint16(register), uint16(wval))
+		result, err = client.WriteSingleRegister(ctx, uint16(register), uint16(wval))
 	case 0x10:
 		var buf []byte
 		buf, err = convertToBytes(etype, o, forcedOrder, wval)
 		if err != nil {
 			break
 		}
-		result, err = client.WriteMultipleRegisters(uint16(register), uint16(len(buf))/2, buf)
+		result, err = client.WriteMultipleRegisters(ctx, uint16(register), uint16(len(buf))/2, buf)
 	case 0x04:
-		result, err = client.ReadInputRegisters(uint16(register), uint16(quantity))
+		result, err = client.ReadInputRegisters(ctx, uint16(register), uint16(quantity))
 	case 0x03:
-		result, err = client.ReadHoldingRegisters(uint16(register), uint16(quantity))
+		result, err = client.ReadHoldingRegisters(ctx, uint16(register), uint16(quantity))
+	case modbus.FuncCodeReadDeviceIdentification:
+		var objects map[byte][]byte
+		if modbus.ReadDeviceIDCode(readDeviceIDCode) == modbus.ReadDeviceIDCodeSpecific {
+			objects, err = client.ReadDeviceIdentificationSpecificObject(ctx, byte(readDeviceIDObject))
+		} else {
+			objects, err = client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCode(readDeviceIDCode))
+		}
+		if err != nil {
+			return nil, err
+		}
+		for key, val := range objects {
+			result = append(result, []byte(fmt.Sprintf("Object ID %d = %s\n", key, val))...)
+		}
 	default:
 		err = fmt.Errorf("function code %d is unsupported", fnCode)
 	}
@@ -195,6 +246,22 @@ func convertToBytes(eType string, order binary.ByteOrder, forcedOrder string, va
 	var buf []byte
 	var err error
 	switch eType {
+	case "int16":
+		max := float64(math.MaxInt16)
+		min := float64(math.MinInt16)
+		if val > max || val < min {
+			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
+			break
+		}
+		buf = w.ToInt16(int16(val))
+	case "int32":
+		max := float64(math.MaxInt32)
+		min := float64(math.MinInt32)
+		if val > max || val < min {
+			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
+			break
+		}
+		buf = w.ToInt32(int32(val))
 	case "uint16":
 		max := float64(math.MaxUint16)
 		if val > max || val < 0 {
@@ -219,6 +286,8 @@ func convertToBytes(eType string, order binary.ByteOrder, forcedOrder string, va
 		buf = w.ToFloat32(float32(val))
 	case "float64":
 		buf = w.ToFloat64(float64(val))
+	default:
+		err = fmt.Errorf("unsupported conversion type %s", eType)
 	}
 
 	// flip bytes when CDAB or BADC are used (and we have 4 bytes)
@@ -230,7 +299,7 @@ func convertToBytes(eType string, order binary.ByteOrder, forcedOrder string, va
 }
 
 func resultToFile(r []byte, filename string) error {
-	return ioutil.WriteFile(filename, r, 0644)
+	return os.WriteFile(filename, r, 0o644)
 }
 
 func resultToRawString(r []byte, startReg int) (string, error) {
@@ -408,16 +477,12 @@ func resultToString(r []byte, order binary.ByteOrder, forcedOrder string, varTyp
 	return "", fmt.Errorf("unsupported datatype: %s", varType)
 }
 
-type logger interface {
-	Printf(format string, v ...interface{})
-}
-
 type option struct {
 	address string
 	slaveID int
 	timeout time.Duration
 
-	logger logger
+	logger modbus.Logger
 
 	rtu struct {
 		baudrate int
@@ -437,6 +502,10 @@ type option struct {
 	tcp struct {
 		linkRecoveryTimeout     time.Duration
 		protocolRecoveryTimeout time.Duration
+
+		certFile string
+		keyFile  string
+		insecure bool
 	}
 }
 
@@ -465,7 +534,34 @@ func newHandler(o option) (modbus.ClientHandler, error) {
 		}
 		return h, nil
 	case "tcp":
-		h := modbus.NewTCPClientHandler(u.Host)
+		var options []modbus.TCPClientHandlerOption
+		if o.tcp.certFile != "" {
+			if o.tcp.keyFile == "" {
+				return nil, fmt.Errorf("key file not specified")
+			}
+			cert, err := tls.LoadX509KeyPair(o.tcp.certFile, o.tcp.keyFile)
+			if err != nil {
+				return nil, fmt.Errorf("loading key pair: %w", err)
+			}
+			options = append(options, modbus.WithTLSConfig(&tls.Config{
+				Certificates:       []tls.Certificate{cert},
+				InsecureSkipVerify: o.tcp.insecure,
+			}))
+		}
+		h := modbus.NewTCPClientHandler(u.Host, options...)
+		h.Timeout = o.timeout
+		h.SlaveID = byte(o.slaveID)
+		h.LinkRecoveryTimeout = o.tcp.linkRecoveryTimeout
+		h.ProtocolRecoveryTimeout = o.tcp.protocolRecoveryTimeout
+		h.Logger = o.logger
+		return h, nil
+	case "udp":
+		h := modbus.NewRTUOverUDPClientHandler(u.Host)
+		h.SlaveID = byte(o.slaveID)
+		h.Logger = o.logger
+		return h, nil
+	case "rtutcp":
+		h := modbus.NewRTUOverTCPClientHandler(u.Host)
 		h.Timeout = o.timeout
 		h.SlaveID = byte(o.slaveID)
 		h.LinkRecoveryTimeout = o.tcp.linkRecoveryTimeout
@@ -473,6 +569,7 @@ func newHandler(o option) (modbus.ClientHandler, error) {
 		h.Logger = o.logger
 		return h, nil
 	}
+
 	return nil, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 }
 
@@ -484,6 +581,19 @@ type writer struct {
 	order binary.ByteOrder
 }
 
+func (w *writer) ToInt16(v int16) []byte {
+	var buf bytes.Buffer
+	w.to(&buf, v)
+	b, _ := io.ReadAll(&buf)
+	return b
+}
+
+func (w *writer) ToInt32(v int32) []byte {
+	var buf bytes.Buffer
+	w.to(&buf, v)
+	b, _ := io.ReadAll(&buf)
+	return b
+}
 func (w *writer) ToUint16(v uint16) []byte {
 	var buf bytes.Buffer
 	w.to(&buf, v)

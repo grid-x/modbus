@@ -1,0 +1,6 @@
+README.md
+LICENSE
+Makefile
+test/
+*_test.go
+

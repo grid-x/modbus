@@ -5,12 +5,16 @@
 package modbus
 
 import (
+	"context"
+	"crypto/tls"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -39,13 +43,44 @@ type TCPClientHandler struct {
 	tcpTransporter
 }
 
-// NewTCPClientHandler allocates a new TCPClientHandler.
-func NewTCPClientHandler(address string) *TCPClientHandler {
+// NewTCPClientHandler allocates a new TCPClientHandler with the given options.
+func NewTCPClientHandler(address string, options ...TCPClientHandlerOption) *TCPClientHandler {
 	h := &TCPClientHandler{}
+	for _, o := range options {
+		o(h)
+	}
 	h.Address = address
 	h.Timeout = tcpTimeout
 	h.IdleTimeout = tcpIdleTimeout
+	if h.Dial == nil {
+		h.Dial = defaultDialFunc(h.Timeout)
+	}
 	return h
+}
+
+// TCPClientHandlerOption configures a TCPClientHandler.
+type TCPClientHandlerOption func(*TCPClientHandler)
+
+// WithDialer returns a TCPClientHandlerOption that sets a custom Dial function.
+func WithDialer(d DialFunc) TCPClientHandlerOption {
+	return func(h *TCPClientHandler) {
+		h.Dial = d
+	}
+}
+
+// DialFunc is the prototype of a function that connects to an address on a
+// named network. It Satisfies the [net.Dialer.DialContext] function signature.
+type DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+
+func defaultDialFunc(timeout time.Duration) DialFunc {
+	return (&net.Dialer{Timeout: timeout}).DialContext
+}
+
+// WithTLSConfig returns a TCPClientHandlerOption that enables TLS encryption with the given options.
+func WithTLSConfig(config *tls.Config) TCPClientHandlerOption {
+	return func(h *TCPClientHandler) {
+		h.tlsConfig = config
+	}
 }
 
 // TCPClient creates TCP client with default handler and given connect string.
@@ -127,7 +162,10 @@ type tcpTransporter struct {
 	Address string
 	// Connect & Read timeout
 	Timeout time.Duration
-	// Idle timeout to close the connection
+	// Idle timeout to close the connection.
+	// If negative, cached connections do not time out.
+	// If zero, disables the caching of TCP connections and only uses dialed
+	// connections for a single Send.
 	IdleTimeout time.Duration
 	// Recovery timeout if tcp communication misbehaves
 	LinkRecoveryTimeout time.Duration
@@ -136,7 +174,11 @@ type tcpTransporter struct {
 	// Silent period after successful connection
 	ConnectDelay time.Duration
 	// Transmission logger
-	Logger logger
+	Logger Logger
+
+	// Dial specifies the dial function for creating TCP connections.
+	// If nil, the transporter dials using the net package.
+	Dial DialFunc
 
 	// TCP connection
 	mu           sync.Mutex
@@ -146,6 +188,8 @@ type tcpTransporter struct {
 
 	lastAttemptedTransactionID  uint16
 	lastSuccessfulTransactionID uint16
+
+	tlsConfig *tls.Config
 }
 
 // helper value to signify what to do in Send
@@ -158,39 +202,53 @@ const (
 )
 
 // Send sends data to server and ensures response length is greater than header length.
-func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error) {
+func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
+	if mb.IdleTimeout == 0 {
+		defer mb.close()
+	}
+
 	var data [tcpMaxLength]byte
-	recoveryDeadline := time.Now().Add(mb.IdleTimeout)
+	linkRecoveryDeadline := time.Now().Add(mb.LinkRecoveryTimeout)
+	protocolRecoveryDeadline := time.Now().Add(mb.ProtocolRecoveryTimeout)
 
 	for {
 		// Establish a new connection if not connected
-		if err = mb.connect(); err != nil {
+		if err = mb.connect(ctx); err != nil {
 			return
 		}
 
 		// Set timer to close when idle
 		mb.lastActivity = time.Now()
 		mb.startCloseTimer()
+
 		// Set write and read timeout
-		var timeout time.Time
 		if mb.Timeout > 0 {
-			timeout = mb.lastActivity.Add(mb.Timeout)
+			if err = mb.conn.SetDeadline(mb.lastActivity.Add(mb.Timeout)); err != nil {
+				return
+			}
 		}
-		if err = mb.conn.SetDeadline(timeout); err != nil {
-			return
-		}
+
 		// Send data
 		mb.logf("modbus: send % x", aduRequest)
 		if _, err = mb.conn.Write(aduRequest); err != nil {
+			if errors.Is(err, syscall.EPIPE) {
+				// If a "broken pipe" (EPIPE) error occurs, it means the remote side has closed the connection.
+				// In this case, we close our side of the connection as well, so that the next attempt will establish a new connection,
+				// because [mb.connect] only dials if [mb.conn] is nil
+				mb.close()
+			}
 			return
 		}
 
 		mb.lastAttemptedTransactionID = binary.BigEndian.Uint16(aduRequest)
 		var res readResult
-		aduResponse, res, err = mb.readResponse(aduRequest, data[:], recoveryDeadline)
+		aduResponse, res, err = mb.readResponse(aduRequest, data[:], linkRecoveryDeadline, protocolRecoveryDeadline)
+		if err != nil {
+			mb.logf("modbus: read response error: %v, res: %v", err, res)
+		}
 		switch res {
 		case readResultDone:
 			if err == nil {
@@ -198,46 +256,66 @@ func (mb *tcpTransporter) Send(aduRequest []byte) (aduResponse []byte, err error
 			}
 			return
 		case readResultRetry:
+			mb.logf("modbus: retry reading response, because of %v", err)
 			continue
+		case readResultCloseRetry:
+			mb.logf("modbus: close connection and retry reading response, because of %v", err)
+			mb.close()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+				continue
+			}
+		default:
+			mb.logf("modbus: unhandled read result %v", res)
+			return nil, fmt.Errorf("modbus: unhandled read result %v", res)
 		}
-
-		mb.logf("modbus: close connection and retry, because of %v", err)
-
-		mb.close()
-		time.Sleep(mb.LinkRecoveryTimeout)
 	}
 }
 
-func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryDeadline time.Time) (aduResponse []byte, res readResult, err error) {
+func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryDeadline time.Time, protocolDeadline time.Time) (aduResponse []byte, res readResult, err error) {
 	// res is readResultDone by default, which either means we succeeded or err contains the fatal error
 	for {
-		if _, err = io.ReadFull(mb.conn, data[:tcpHeaderSize]); err == nil {
-			aduResponse, err = mb.processResponse(data[:])
-			if err == nil {
-				err = verify(aduRequest, aduResponse)
-				if err == nil {
-					mb.logf("modbus: recv % x\n", aduResponse)
-					return // everything is OK
-				}
-			}
-
-			// no time left, report error
-			if time.Since(recoveryDeadline) >= 0 {
+		if _, err = io.ReadFull(mb.conn, data[:tcpHeaderSize]); err != nil {
+			// recovery disabled or deadline reached - report error
+			if mb.LinkRecoveryTimeout == 0 || time.Until(recoveryDeadline) < 0 {
 				return
 			}
-
-			switch v := err.(type) {
-			case ErrTCPHeaderLength:
-				if mb.LinkRecoveryTimeout > 0 {
-					// TCP header not OK - retry with another query
-					res = readResultRetry
-					return
-				}
-				// no time left, report error
+			if err == io.EOF || err == io.ErrUnexpectedEOF || err == syscall.ECONNRESET {
+				mb.logf("modbus: connection closed by remote side: %v", err)
+				res = readResultCloseRetry
+			}
+			return
+		}
+		aduResponse, err = mb.processResponse(data[:]) // this also does io
+		if err != nil {
+			// recovery disabled or deadline reached - report error
+			if mb.LinkRecoveryTimeout == 0 || time.Until(recoveryDeadline) < 0 {
 				return
-			case errTransactionIDMismatch:
-				// the first condition check for a normal transaction id mismatch. The second part of the condition check for a wrap-around. If a wraparound is
-				// detected (last attempt is smaller than last success), the id can be higher than the last success or lower than the last attempt, but not both
+			}
+			if err == io.EOF || err == io.ErrUnexpectedEOF || err == syscall.ECONNRESET {
+				mb.logf("modbus: connection closed by remote side: %v", err)
+				res = readResultCloseRetry
+				return
+			}
+			if _, ok := err.(ErrTCPHeaderLength); ok {
+				// TCP header not OK - retry with another query
+				res = readResultRetry
+				return
+			}
+			// other error - report
+			return
+		}
+
+		err = verify(aduRequest, aduResponse)
+		if err != nil {
+			mb.logf("modbus: verify error: %v", err)
+			// recovery disabled or deadline reached - report error
+			if mb.ProtocolRecoveryTimeout == 0 || time.Until(protocolDeadline) < 0 {
+				return
+			}
+			if v, ok := err.(errTransactionIDMismatch); ok {
 				if (v.got > mb.lastSuccessfulTransactionID && v.got < mb.lastAttemptedTransactionID) ||
 					(mb.lastAttemptedTransactionID < mb.lastSuccessfulTransactionID && (v.got > mb.lastSuccessfulTransactionID || v.got < mb.lastAttemptedTransactionID)) {
 					// most likely, we simply had a timeout for the earlier query and now read the (late) response. Ignore it
@@ -246,27 +324,15 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 					// transactionId X is already in the buffer).
 					continue
 				}
-				if mb.ProtocolRecoveryTimeout > 0 {
-					// some other mismatch, still in time and protocol may recover - retry with another query
-					res = readResultRetry
-					return
-				}
-				return // no time left, report error
-			default:
-				if mb.ProtocolRecoveryTimeout > 0 {
-					// TCP header OK but modbus frame not - retry with another query
-					res = readResultRetry
-					return
-				}
-				return // no time left, report error
+				res = readResultRetry
+				return
 			}
-		} else if (err != io.EOF && err != io.ErrUnexpectedEOF) ||
-			mb.LinkRecoveryTimeout == 0 || time.Until(recoveryDeadline) < 0 {
+			// other error - report
 			return
 		}
-		// any other error, but recovery deadline isn't reached yet - close and retry
-		res = readResultCloseRetry
-		return
+		mb.logf("modbus: recv % x\n", aduResponse)
+		return // everything is OK
+
 	}
 }
 
@@ -289,6 +355,10 @@ func (mb *tcpTransporter) processResponse(data []byte) (aduResponse []byte, err 
 		return
 	}
 	aduResponse = data[:length]
+	if len(aduResponse) == 0 {
+		err = io.EOF
+		return
+	}
 	return
 }
 
@@ -300,7 +370,32 @@ func (e errTransactionIDMismatch) Error() string {
 	return fmt.Sprintf("modbus: response transaction id '%v' does not match request '%v'", e.got, e.expected)
 }
 
+type errProtocolIDMismatch struct {
+	got, expected uint16
+}
+
+func (e errProtocolIDMismatch) Error() string {
+	return fmt.Sprintf("modbus: response protocol id '%v' does not match request '%v'", e.got, e.expected)
+}
+
+type errUnitIDMismatch struct {
+	got, expected byte
+}
+
+func (e errUnitIDMismatch) Error() string {
+	return fmt.Sprintf("modbus: response unit id '%v' does not match request '%v'", e.got, e.expected)
+}
+
+const sizeInt16 = 2
+
 func verify(aduRequest []byte, aduResponse []byte) (err error) {
+	// len guard check for conversion
+	if len(aduRequest) < sizeInt16 {
+		return ErrADURequestLength(len(aduRequest))
+	}
+	if len(aduResponse) < sizeInt16 {
+		return ErrADUResponseLength(len(aduResponse))
+	}
 	// Transaction id
 	responseVal := binary.BigEndian.Uint16(aduResponse)
 	requestVal := binary.BigEndian.Uint16(aduRequest)
@@ -312,12 +407,12 @@ func verify(aduRequest []byte, aduResponse []byte) (err error) {
 	responseVal = binary.BigEndian.Uint16(aduResponse[2:])
 	requestVal = binary.BigEndian.Uint16(aduRequest[2:])
 	if responseVal != requestVal {
-		err = fmt.Errorf("modbus: response protocol id '%v' does not match request '%v'", responseVal, requestVal)
+		err = errProtocolIDMismatch{got: responseVal, expected: requestVal}
 		return
 	}
 	// Unit id (1 byte)
 	if aduResponse[6] != aduRequest[6] {
-		err = fmt.Errorf("modbus: response unit id '%v' does not match request '%v'", aduResponse[6], aduRequest[6])
+		err = errUnitIDMismatch{got: aduResponse[6], expected: aduRequest[6]}
 		return
 	}
 	return
@@ -325,24 +420,28 @@ func verify(aduRequest []byte, aduResponse []byte) (err error) {
 
 // Connect establishes a new connection to the address in Address.
 // Connect and Close are exported so that multiple requests can be done with one session
-func (mb *tcpTransporter) Connect() error {
+func (mb *tcpTransporter) Connect(ctx context.Context) error {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
-	return mb.connect()
+	return mb.connect(ctx)
 }
 
-func (mb *tcpTransporter) connect() error {
+func (mb *tcpTransporter) connect(ctx context.Context) error {
 	if mb.conn == nil {
-		dialer := net.Dialer{Timeout: mb.Timeout}
-		conn, err := dialer.Dial("tcp", mb.Address)
+		conn, err := mb.Dial(ctx, "tcp", mb.Address)
 		if err != nil {
 			return err
 		}
+		if mb.tlsConfig != nil {
+			conn = tls.Client(conn, mb.tlsConfig)
+		}
 		mb.conn = conn
-
-		// silent period
-		time.Sleep(mb.ConnectDelay)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(mb.ConnectDelay): //silent period
+		}
 	}
 	return nil
 }
@@ -402,7 +501,7 @@ func (mb *tcpTransporter) closeIdle() {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 
-	if mb.IdleTimeout <= 0 {
+	if mb.IdleTimeout < 0 {
 		return
 	}
 

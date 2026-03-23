@@ -10,13 +10,13 @@ import (
 func TestTCPEncodeDecode(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		packager := &tcpPackager{
-			transactionID: rapid.Uint32().Draw(t, "transactionID").(uint32),
-			SlaveID:       rapid.Byte().Draw(t, "SlaveID").(byte),
+			transactionID: rapid.Uint32().Draw(t, "transactionID"),
+			SlaveID:       rapid.Byte().Draw(t, "SlaveID"),
 		}
 
 		pdu := &ProtocolDataUnit{
-			FunctionCode: rapid.Byte().Draw(t, "FunctionCode").(byte),
-			Data:         rapid.SliceOf(rapid.Byte()).Draw(t, "Data").([]byte),
+			FunctionCode: rapid.Byte().Draw(t, "FunctionCode"),
+			Data:         rapid.SliceOf(rapid.Byte()).Draw(t, "Data"),
 		}
 
 		raw, err := packager.Encode(pdu)
