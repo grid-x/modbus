@@ -102,6 +102,54 @@ func TestTCPTransporter(t *testing.T) {
 	}
 }
 
+// failWriteConn wraps a [net.Conn] so that every Write call fails with
+// io.ErrClosedPipe. SetDeadline and all other methods delegate to the
+// underlying Conn so that the transporter's connection-setup code succeeds
+// normally; only Write is intercepted. This lets tests exercise the
+// write-error code path without depending on OS TCP-buffer timing or
+// net.Pipe's synchronous-close behavior.
+type failWriteConn struct{ net.Conn }
+
+func (c *failWriteConn) Write(_ []byte) (int, error) { return 0, io.ErrClosedPipe }
+
+// TestTCPWriteErrorClosesConnection any write error must set
+// mb.conn to nil so that the next Send() dials a fresh connection rather than
+// reusing a dead socket.
+func TestTCPWriteErrorClosesConnection(t *testing.T) {
+	_, cliConn := net.Pipe()
+	t.Cleanup(func() { cliConn.Close() })
+
+	dialCalls := 0
+	handler := NewTCPClientHandler("irrelevant", WithDialer(
+		func(_ context.Context, _, _ string) (net.Conn, error) {
+			dialCalls++
+			return &failWriteConn{cliConn}, nil
+		},
+	))
+	handler.Timeout = time.Second
+	tr := &handler.tcpTransporter
+
+	getConn := func() net.Conn {
+		tr.mu.Lock()
+		defer tr.mu.Unlock()
+		return tr.conn
+	}
+
+	req := []byte{0, 1, 0, 0, 0, 2, 0, 3} // TID=1, PID=0, Len=2, Unit=0, FC=3
+	if _, err := tr.Send(context.Background(), req); err == nil {
+		t.Fatal("expected write error, got nil")
+	}
+
+	// conn must be nil so the next Send() re-dials
+	// via connect() rather than writing on a dead socket.
+	if conn := getConn(); conn != nil {
+		t.Fatalf("conn must be nil after write error, got %v", conn)
+	}
+	if dialCalls != 1 {
+		t.Fatalf("expected exactly 1 dial, got %d", dialCalls)
+	}
+}
+
 func TestErrTCPHeaderLength_Error(t *testing.T) {
 	// should not explode
 	_ = ErrTCPHeaderLength(1000).Error()
