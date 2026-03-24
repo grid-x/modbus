@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -267,8 +268,16 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 		switch res {
 		case readResultDone:
 			if err != nil {
-				mb.logf("modbus: read response error: closing connection: %v, res: %v", err, res)
-				mb.close()
+				var netErr net.Error
+				if errors.As(err, &netErr) && netErr.Timeout() {
+					// Timeout: the device may be slow. Keep the connection open so
+					// the late response can be drained on the next Send via
+					// ProtocolRecoveryTimeout transaction-ID matching.
+					mb.logf("modbus: read response timeout, keeping connection: %v", err)
+				} else {
+					mb.logf("modbus: read response error: closing connection: %v", err)
+					mb.close()
+				}
 				err = fmt.Errorf("modbus: read response: %w", err)
 			} else {
 				mb.lastSuccessfulTransactionID = binary.BigEndian.Uint16(aduResponse)
