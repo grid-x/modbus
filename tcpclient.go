@@ -216,6 +216,7 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 	for {
 		// Establish a new connection if not connected
 		if err = mb.connect(ctx); err != nil {
+			err = fmt.Errorf("modbus: connect: %w", err)
 			return
 		}
 
@@ -226,6 +227,7 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 		// Set write and read timeout
 		if mb.Timeout > 0 {
 			if err = mb.conn.SetDeadline(mb.lastActivity.Add(mb.Timeout)); err != nil {
+				err = fmt.Errorf("modbus: set deadline: %w", err)
 				return
 			}
 		}
@@ -252,6 +254,7 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 			// mb.conn != nil).
 			mb.logf("modbus: write error, closing connection: %v", err)
 			mb.close()
+			err = fmt.Errorf("modbus: write: %w", err)
 			return
 		}
 
@@ -266,6 +269,7 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 			if err != nil {
 				mb.logf("modbus: read response error: closing connection: %v, res: %v", err, res)
 				mb.close()
+				err = fmt.Errorf("modbus: read response: %w", err)
 			} else {
 				mb.lastSuccessfulTransactionID = binary.BigEndian.Uint16(aduResponse)
 			}
