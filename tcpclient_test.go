@@ -270,13 +270,12 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 
 	// first two attempts should timeout
 	_, err = client.ReadInputRegisters(ctx, 0, 1)
-	opError, ok := err.(*net.OpError)
-	if !ok || !opError.Timeout() {
+	var opError *net.OpError
+	if !errors.As(err, &opError) || !opError.Timeout() {
 		t.Fatalf("expected timeout error, got %q", err)
 	}
 	_, err = client.ReadInputRegisters(ctx, 0, 1)
-	opError, ok = err.(*net.OpError)
-	if !ok || !opError.Timeout() {
+	if !errors.As(err, &opError) || !opError.Timeout() {
 		t.Fatalf("expected timeout error, got %q", err)
 	}
 
