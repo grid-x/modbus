@@ -263,7 +263,10 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 		}
 		switch res {
 		case readResultDone:
-			if err == nil {
+			if err != nil {
+				mb.logf("modbus: read response error: closing connection: %v, res: %v", err, res)
+				mb.close()
+			} else {
 				mb.lastSuccessfulTransactionID = binary.BigEndian.Uint16(aduResponse)
 			}
 			return
