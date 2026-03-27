@@ -167,7 +167,7 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Ti
 
 	for {
 		if time.Now().After(deadline) { // Possible that serialport may spew data
-			return nil, context.DeadlineExceeded
+			return nil, fmt.Errorf("failed to read from serial port within deadline: %w", context.DeadlineExceeded)
 		}
 
 		if _, err := io.ReadAtLeast(r, buf, 1); err != nil {
