@@ -289,7 +289,9 @@ func (mb *rtuSerialTransporter) Send(ctx context.Context, aduRequest []byte) (ad
 		}
 
 		aduResponse, err = readIncrementally(aduRequest[0], aduRequest[1], mb.port, connDeadline)
-		mb.logf("modbus: recv % x\n", aduResponse[:])
+		if aduResponse != nil {
+			mb.logf("modbus: recv % x\n", aduResponse[:])
+		}
 
 		if err != nil {
 			if mb.shouldRecover(err) {
