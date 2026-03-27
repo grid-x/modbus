@@ -191,7 +191,7 @@ func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (
 		mb.logf("modbus: send % x\n", aduRequest)
 		if _, err = mb.port.Write(aduRequest); err != nil {
 			if err == io.EOF || err == io.ErrUnexpectedEOF || err == syscall.ECONNRESET {
-				if time.Now().After(linkRecoveryDeadline) {
+				if mb.LinkRecoveryTimeout == 0 || time.Until(linkRecoveryDeadline) < 0 {
 					err = fmt.Errorf("modbus: link recovery timeout reached: %w", err)
 					return
 				}
@@ -216,7 +216,7 @@ func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (
 		mb.logf("modbus: recv % x\n", aduResponse)
 		if err != nil {
 			if err == io.EOF || err == io.ErrUnexpectedEOF || err == syscall.ECONNRESET {
-				if time.Now().After(linkRecoveryDeadline) {
+				if mb.LinkRecoveryTimeout == 0 || time.Until(linkRecoveryDeadline) < 0 {
 					err = fmt.Errorf("modbus: link recovery timeout reached: %w", err)
 					return
 				}
