@@ -217,6 +217,7 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 	for {
 		// Establish a new connection if not connected
 		if err = mb.connect(ctx); err != nil {
+			err = fmt.Errorf("modbus: connect: %w", err)
 			return
 		}
 
@@ -227,6 +228,7 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 		// Set write and read timeout
 		if mb.Timeout > 0 {
 			if err = mb.conn.SetDeadline(mb.lastActivity.Add(mb.Timeout)); err != nil {
+				err = fmt.Errorf("modbus: set deadline: %w", err)
 				return
 			}
 		}
@@ -234,12 +236,26 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 		// Send data
 		mb.logf("modbus: send % x", aduRequest)
 		if _, err = mb.conn.Write(aduRequest); err != nil {
-			if errors.Is(err, syscall.EPIPE) {
-				// If a "broken pipe" (EPIPE) error occurs, it means the remote side has closed the connection.
-				// In this case, we close our side of the connection as well, so that the next attempt will establish a new connection,
-				// because [mb.connect] only dials if [mb.conn] is nil
-				mb.close()
-			}
+			// Close on any write error, regardless of its type. [net.Conn.Write]
+			// has no context parameter, so every error it returns is an OS- or
+			// network-level condition:
+			//
+			//   - EPIPE / ECONNRESET – peer closed the connection.
+			//   - Timeout (net.Error.Timeout) – deadline expired mid-write; TCP
+			//     may have flushed 0..N bytes. The server received a partial
+			//     request and the stream is desynchronized.
+			//   - Any other error (ENETDOWN, EHOSTUNREACH, partial write, …) –
+			//     the connection state is equally unknown.
+			//
+			// For a request/response protocol like Modbus there is no
+			// recoverable write error: either the server got nothing (broken
+			// pipe) or it got a partial frame (stream corruption). In both cases
+			// the only safe action is to close and reconnect, so that the next
+			// Send() dials fresh via connect() (which is a no-op when
+			// mb.conn != nil).
+			mb.logf("modbus: write error, closing connection: %v", err)
+			mb.close()
+			err = fmt.Errorf("modbus: write: %w", err)
 			return
 		}
 
@@ -251,7 +267,19 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 		}
 		switch res {
 		case readResultDone:
-			if err == nil {
+			if err != nil {
+				var netErr net.Error
+				if errors.As(err, &netErr) && netErr.Timeout() {
+					// Timeout: the device may be slow. Keep the connection open so
+					// the late response can be drained on the next Send via
+					// ProtocolRecoveryTimeout transaction-ID matching.
+					mb.logf("modbus: read response timeout, keeping connection: %v", err)
+				} else {
+					mb.logf("modbus: read response error: closing connection: %v", err)
+					mb.close()
+				}
+				err = fmt.Errorf("modbus: read response: %w", err)
+			} else {
 				mb.lastSuccessfulTransactionID = binary.BigEndian.Uint16(aduResponse)
 			}
 			return
