@@ -9,7 +9,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"syscall"
 	"time"
 )
 
@@ -271,22 +270,10 @@ func (mb *rtuSerialTransporter) Send(ctx context.Context, aduRequest []byte) (ad
 		// Send the request
 		mb.logf("modbus: send % x\n", aduRequest)
 		if _, err = mb.port.Write(aduRequest); err != nil {
-			if err == io.EOF || err == io.ErrUnexpectedEOF || err == syscall.ECONNRESET {
-				if mb.LinkRecoveryTimeout == 0 || time.Until(linkRecoveryDeadline) < 0 {
-					err = fmt.Errorf("modbus: link recovery timeout reached: %w", err)
+			if mb.shouldRecover(err) {
+				if err = mb.reconnect(ctx, err, linkRecoveryDeadline); err != nil {
 					return
 				}
-				// reconnect on connection reset
-				mb.logf("modbus: connection reset, reconnecting")
-				if cerr := mb.close(); cerr != nil {
-					mb.logf("modbus: error closing connection: %v", cerr)
-					return
-				}
-				if cerr := mb.connect(ctx); cerr != nil {
-					mb.logf("modbus: error reconnecting: %v", cerr)
-					return
-				}
-				// retry the communication
 				continue
 			}
 
@@ -305,22 +292,10 @@ func (mb *rtuSerialTransporter) Send(ctx context.Context, aduRequest []byte) (ad
 		mb.logf("modbus: recv % x\n", aduResponse[:])
 
 		if err != nil {
-			if err == io.EOF || err == io.ErrUnexpectedEOF || err == syscall.ECONNRESET {
-				if mb.LinkRecoveryTimeout == 0 || time.Until(linkRecoveryDeadline) < 0 {
-					err = fmt.Errorf("modbus: link recovery timeout reached: %w", err)
+			if mb.shouldRecover(err) {
+				if err = mb.reconnect(ctx, err, linkRecoveryDeadline); err != nil {
 					return
 				}
-				// reconnect on connection reset
-				mb.logf("modbus: connection reset, reconnecting")
-				if cerr := mb.close(); cerr != nil {
-					mb.logf("modbus: error closing connection: %v", cerr)
-					return
-				}
-				if cerr := mb.connect(ctx); cerr != nil {
-					mb.logf("modbus: error reconnecting: %v", cerr)
-					return
-				}
-				// retry the communication
 				continue
 			}
 			// Unknown error

@@ -6,9 +6,11 @@ package modbus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/grid-x/serial"
@@ -89,6 +91,28 @@ func (mb *serialPort) logf(format string, v ...interface{}) {
 	if mb.Logger != nil {
 		mb.Logger.Printf(format, v...)
 	}
+}
+
+func (mb *serialPort) shouldRecover(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET)
+}
+
+func (mb *serialPort) reconnect(ctx context.Context, err error, linkRecoveryDeadline time.Time) error {
+	if mb.LinkRecoveryTimeout == 0 || time.Until(linkRecoveryDeadline) < 0 {
+		return fmt.Errorf("modbus: link recovery timeout reached: %w", err)
+	}
+
+	mb.logf("modbus: connection reset, reconnecting")
+	if cerr := mb.close(); cerr != nil {
+		mb.logf("modbus: error closing connection: %v", cerr)
+		return cerr
+	}
+	if cerr := mb.connect(ctx); cerr != nil {
+		mb.logf("modbus: error reconnecting: %v", cerr)
+		return cerr
+	}
+
+	return nil
 }
 
 func (mb *serialPort) startCloseTimer() {
