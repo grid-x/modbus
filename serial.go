@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/grid-x/serial"
@@ -94,7 +93,7 @@ func (mb *serialPort) logf(format string, v ...interface{}) {
 }
 
 func (mb *serialPort) shouldRecover(err error) bool {
-	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET)
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func (mb *serialPort) reconnect(ctx context.Context, err error, linkRecoveryDeadline time.Time) error {
