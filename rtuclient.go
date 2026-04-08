@@ -263,7 +263,6 @@ func (mb *rtuSerialTransporter) Send(ctx context.Context, aduRequest []byte) (ad
 	mb.lastActivity = time.Now()
 	mb.startCloseTimer()
 
-	connDeadline := time.Now().Add(mb.Timeout)
 	linkRecoveryDeadline := time.Now().Add(mb.LinkRecoveryTimeout)
 
 	for {
@@ -288,6 +287,7 @@ func (mb *rtuSerialTransporter) Send(ctx context.Context, aduRequest []byte) (ad
 		case <-time.After(mb.calculateDelay(len(aduRequest) + bytesToRead)):
 		}
 
+		connDeadline := time.Now().Add(mb.Timeout)
 		aduResponse, err = readIncrementally(aduRequest[0], aduRequest[1], mb.port, connDeadline)
 		if aduResponse != nil {
 			mb.logf("modbus: recv % x\n", aduResponse[:])
