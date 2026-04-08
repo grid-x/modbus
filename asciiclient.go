@@ -200,7 +200,9 @@ func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (
 		// Get the response
 		connDeadline := time.Now().Add(mb.Timeout)
 		aduResponse, err = readASCII(mb.port, connDeadline)
-		mb.logf("modbus: recv % x\n", aduResponse)
+		if aduResponse != nil {
+			mb.logf("modbus: recv % x\n", aduResponse[:])
+		}
 		if err != nil {
 			if mb.shouldRecover(err) {
 				if err = mb.reconnect(ctx, err, linkRecoveryDeadline); err != nil {
