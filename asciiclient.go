@@ -226,7 +226,7 @@ func readASCII(r io.Reader, deadline time.Time) ([]byte, error) {
 
 	for {
 		if time.Now().After(deadline) {
-			return nil, context.DeadlineExceeded
+			return nil, fmt.Errorf("failed to read from serial port before deadline: %w", context.DeadlineExceeded)
 		}
 		if n, err = r.Read(data[length:]); err != nil {
 			return nil, err
