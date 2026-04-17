@@ -108,12 +108,12 @@ func (mb *serialPort) reconnect(ctx context.Context, err error, linkRecoveryDead
 	}
 
 	mb.logf("modbus: connection reset, reconnecting")
+	recoveryErr := err
 	if cerr := mb.close(); cerr != nil {
+		recoveryErr = errors.Join(recoveryErr, cerr)
 		mb.logf("modbus: error closing connection: %v", cerr)
-		return cerr
 	}
 
-	lastErr := err
 	deadlineTimer := time.NewTimer(time.Until(linkRecoveryDeadline))
 	defer deadlineTimer.Stop()
 	retryTicker := time.NewTicker(mb.reconnectRetryInterval())
@@ -123,7 +123,7 @@ func (mb *serialPort) reconnect(ctx context.Context, err error, linkRecoveryDead
 		if cerr := mb.connect(ctx); cerr == nil {
 			return nil
 		} else {
-			lastErr = cerr
+			recoveryErr = errors.Join(recoveryErr, cerr)
 			mb.logf("modbus: error reconnecting: %v", cerr)
 		}
 
@@ -131,7 +131,7 @@ func (mb *serialPort) reconnect(ctx context.Context, err error, linkRecoveryDead
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadlineTimer.C:
-			return fmt.Errorf("modbus: link recovery timeout reached: %w", lastErr)
+			return fmt.Errorf("modbus: link recovery timeout reached: %w", recoveryErr)
 		case <-retryTicker.C:
 		}
 	}
