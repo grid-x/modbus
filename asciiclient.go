@@ -36,6 +36,7 @@ func NewASCIIClientHandler(address string) *ASCIIClientHandler {
 	handler.Address = address
 	handler.Timeout = serialTimeout
 	handler.IdleTimeout = serialIdleTimeout
+	handler.ReconnectRetryInterval = serialReconnectRetryInterval
 	return handler
 }
 

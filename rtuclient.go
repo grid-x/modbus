@@ -55,6 +55,7 @@ func NewRTUClientHandler(address string) *RTUClientHandler {
 	handler.Address = address
 	handler.Timeout = serialTimeout
 	handler.IdleTimeout = serialIdleTimeout
+	handler.ReconnectRetryInterval = serialReconnectRetryInterval
 	return handler
 }
 

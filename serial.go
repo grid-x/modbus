@@ -19,6 +19,8 @@ const (
 	// Default timeout
 	serialTimeout     = 5 * time.Second
 	serialIdleTimeout = 60 * time.Second
+	// Retry interval while spending the link recovery budget on reconnects.
+	serialReconnectRetryInterval = 10 * time.Millisecond
 )
 
 // serialPort has configuration and I/O controller.
@@ -33,6 +35,9 @@ type serialPort struct {
 	ConnectDelay time.Duration
 	// Recovery timeout if the connection is lost
 	LinkRecoveryTimeout time.Duration
+	// Interval between reconnect attempts while spending the link recovery budget.
+	// Zero or negative values fall back to the default retry interval.
+	ReconnectRetryInterval time.Duration
 
 	mu sync.Mutex
 	// port is platform-dependent data structure for serial port.
@@ -107,12 +112,36 @@ func (mb *serialPort) reconnect(ctx context.Context, err error, linkRecoveryDead
 		mb.logf("modbus: error closing connection: %v", cerr)
 		return cerr
 	}
-	if cerr := mb.connect(ctx); cerr != nil {
-		mb.logf("modbus: error reconnecting: %v", cerr)
-		return cerr
-	}
 
-	return nil
+	lastErr := err
+	deadlineTimer := time.NewTimer(time.Until(linkRecoveryDeadline))
+	defer deadlineTimer.Stop()
+	retryTicker := time.NewTicker(mb.reconnectRetryInterval())
+	defer retryTicker.Stop()
+
+	for {
+		if cerr := mb.connect(ctx); cerr == nil {
+			return nil
+		} else {
+			lastErr = cerr
+			mb.logf("modbus: error reconnecting: %v", cerr)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadlineTimer.C:
+			return fmt.Errorf("modbus: link recovery timeout reached: %w", lastErr)
+		case <-retryTicker.C:
+		}
+	}
+}
+
+func (mb *serialPort) reconnectRetryInterval() time.Duration {
+	if mb.ReconnectRetryInterval > 0 {
+		return mb.ReconnectRetryInterval
+	}
+	return serialReconnectRetryInterval
 }
 
 func (mb *serialPort) startCloseTimer() {
