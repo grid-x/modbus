@@ -278,8 +278,6 @@ func (mb *rtuSerialTransporter) Send(ctx context.Context, aduRequest []byte) (ad
 
 			return
 		}
-		// function := aduRequest[1]
-		// functionFail := aduRequest[1] & 0x80
 		bytesToRead := calculateResponseLength(aduRequest)
 		select {
 		case <-ctx.Done():
