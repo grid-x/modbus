@@ -1,5 +1,5 @@
-//go:build darwin || linux || freebsd || openbsd || netbsd
-// +build darwin linux freebsd openbsd netbsd
+//go:build linux || freebsd || openbsd || netbsd
+// +build linux freebsd openbsd netbsd
 
 // Copyright 2014 Quoc-Viet Nguyen. All rights reserved.
 // This software may be modified and distributed under the terms
