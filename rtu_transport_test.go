@@ -258,7 +258,7 @@ func TestRTUSerialTransporter_PartialResponseThenTimeout(t *testing.T) {
 	}
 }
 
-func TestRTUSerialTransporter_ReconnectBudgetExhaustedOnReadEOF(t *testing.T) {
+func TestRTUSerialTransporter_RecoveryDisabledOnReadEOF(t *testing.T) {
 	req := []byte{0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0A}
 	port := &scriptedPort{readErr: io.EOF}
 
@@ -281,23 +281,64 @@ func TestRTUSerialTransporter_ReconnectBudgetExhaustedOnReadEOF(t *testing.T) {
 	}
 }
 
-func TestRTUSerialTransporter_ReconnectOnWriteEOF(t *testing.T) {
+func TestRTUSerialTransporter_ReconnectBudgetExhaustedOnReadEOF(t *testing.T) {
 	req := []byte{0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0A}
-	port := &scriptedPort{writeErr: io.EOF}
+	port := &scriptedPort{readErr: io.EOF}
+	recoveryTimeout := 80 * time.Millisecond
 
 	transporter := &rtuSerialTransporter{}
 	transporter.Address = filepath.Join(t.TempDir(), "missing-serial")
 	transporter.port = port
 	transporter.BaudRate = 19200
 	transporter.Timeout = 100 * time.Millisecond
-	transporter.LinkRecoveryTimeout = 100 * time.Millisecond
+	transporter.LinkRecoveryTimeout = recoveryTimeout
 
+	start := time.Now()
 	_, err := transporter.Send(context.Background(), req)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected link recovery timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "link recovery timeout reached") {
+		t.Fatalf("expected link recovery timeout error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "could not open") {
+		t.Fatalf("expected reconnect open failure to be wrapped, got %v", err)
+	}
+	if elapsed < recoveryTimeout-20*time.Millisecond {
+		t.Fatalf("expected recovery to keep retrying for about %v, returned after %v", recoveryTimeout, elapsed)
+	}
+	if !port.closed {
+		t.Fatal("expected reconnect to close the original port after read EOF")
+	}
+	if got := port.written.Bytes(); !bytes.Equal(got, req) {
+		t.Fatalf("expected request %x, got %x", req, got)
+	}
+}
+
+func TestRTUSerialTransporter_ReconnectOnWriteEOF(t *testing.T) {
+	req := []byte{0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0A}
+	port := &scriptedPort{writeErr: io.EOF}
+	recoveryTimeout := 80 * time.Millisecond
+
+	transporter := &rtuSerialTransporter{}
+	transporter.Address = filepath.Join(t.TempDir(), "missing-serial")
+	transporter.port = port
+	transporter.BaudRate = 19200
+	transporter.Timeout = 100 * time.Millisecond
+	transporter.LinkRecoveryTimeout = recoveryTimeout
+
+	start := time.Now()
+	_, err := transporter.Send(context.Background(), req)
+	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected reconnect error after write EOF, got nil")
 	}
-	if !strings.Contains(err.Error(), "could not open") {
-		t.Fatalf("expected reconnect open failure, got %v", err)
+	if !strings.Contains(err.Error(), "link recovery timeout reached") || !strings.Contains(err.Error(), "could not open") {
+		t.Fatalf("expected timed-out reconnect open failure, got %v", err)
+	}
+	if elapsed < recoveryTimeout-20*time.Millisecond {
+		t.Fatalf("expected recovery to keep retrying for about %v, returned after %v", recoveryTimeout, elapsed)
 	}
 	if !port.closed {
 		t.Fatal("expected reconnect to close the original port after write EOF")
