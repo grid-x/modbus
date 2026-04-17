@@ -49,6 +49,7 @@ func (mb *serialPort) Connect(ctx context.Context) (err error) {
 }
 
 // connect connects to the serial port if it is not connected. Caller must hold the mutex.
+// Note: caller must handle the connection close and recovery if the connection is lost.
 func (mb *serialPort) connect(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
