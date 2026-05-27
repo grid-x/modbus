@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -35,6 +36,7 @@ func NewASCIIClientHandler(address string) *ASCIIClientHandler {
 	handler.Address = address
 	handler.Timeout = serialTimeout
 	handler.IdleTimeout = serialIdleTimeout
+	handler.ReconnectRetryInterval = serialReconnectRetryInterval
 	return handler
 }
 
@@ -181,17 +183,54 @@ func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (
 	mb.lastActivity = time.Now()
 	mb.startCloseTimer()
 
-	// Send the request
-	mb.logf("modbus: send % x\n", aduRequest)
-	if _, err = mb.port.Write(aduRequest); err != nil {
+	linkRecoveryDeadline := time.Now().Add(mb.LinkRecoveryTimeout)
+
+	for {
+		// Send the request
+		mb.logf("modbus: send % x\n", aduRequest)
+		if _, err = mb.port.Write(aduRequest); err != nil {
+			if mb.shouldRecover(err) {
+				if err = mb.reconnect(ctx, err, linkRecoveryDeadline); err != nil {
+					return
+				}
+				continue
+			}
+
+			return
+		}
+		// Get the response
+		connDeadline := time.Now().Add(mb.Timeout)
+		aduResponse, err = readASCII(mb.port, connDeadline)
+		if aduResponse != nil {
+			mb.logf("modbus: recv % x\n", aduResponse[:])
+		}
+		if err != nil {
+			if mb.shouldRecover(err) {
+				if err = mb.reconnect(ctx, err, linkRecoveryDeadline); err != nil {
+					return
+				}
+				continue
+			}
+			// Unknown error
+			mb.logf("modbus: read error: %v", err)
+			return
+		}
+
 		return
 	}
-	// Get the response
+}
+
+func readASCII(r io.Reader, deadline time.Time) ([]byte, error) {
 	var n, length int
 	var data [asciiMaxSize]byte
+	var err error
+
 	for {
-		if n, err = mb.port.Read(data[length:]); err != nil {
-			return
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("failed to read from serial port before deadline: %w", context.DeadlineExceeded)
+		}
+		if n, err = r.Read(data[length:]); err != nil {
+			return nil, err
 		}
 		length += n
 		if length >= asciiMaxSize || n == 0 {
@@ -204,9 +243,8 @@ func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (
 			}
 		}
 	}
-	aduResponse = data[:length]
-	mb.logf("modbus: recv % x\n", aduResponse)
-	return
+
+	return data[:length], nil
 }
 
 // writeHex encodes byte to string in hexadecimal, e.g. 0xA5 => "A5"

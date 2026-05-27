@@ -6,6 +6,7 @@ package modbus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -18,6 +19,8 @@ const (
 	// Default timeout
 	serialTimeout     = 5 * time.Second
 	serialIdleTimeout = 60 * time.Second
+	// Retry interval while spending the link recovery budget on reconnects.
+	serialReconnectRetryInterval = 10 * time.Millisecond
 )
 
 // serialPort has configuration and I/O controller.
@@ -25,8 +28,16 @@ type serialPort struct {
 	// Serial port configuration.
 	serial.Config
 
-	Logger      Logger
+	Logger Logger
+	// IdleTimeout is the duration to close the connection when no activity.
 	IdleTimeout time.Duration
+	// Silent period after successful connection
+	ConnectDelay time.Duration
+	// Recovery timeout if the connection is lost
+	LinkRecoveryTimeout time.Duration
+	// Interval between reconnect attempts while spending the link recovery budget.
+	// Zero or negative values fall back to the default retry interval.
+	ReconnectRetryInterval time.Duration
 
 	mu sync.Mutex
 	// port is platform-dependent data structure for serial port.
@@ -43,6 +54,7 @@ func (mb *serialPort) Connect(ctx context.Context) (err error) {
 }
 
 // connect connects to the serial port if it is not connected. Caller must hold the mutex.
+// Note: caller must handle the connection close and recovery if the connection is lost.
 func (mb *serialPort) connect(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
@@ -52,9 +64,14 @@ func (mb *serialPort) connect(ctx context.Context) error {
 	if mb.port == nil {
 		port, err := serial.Open(&mb.Config)
 		if err != nil {
-			return fmt.Errorf("could not open %s: %w", mb.Config.Address, err)
+			return fmt.Errorf("could not open %s: %w", mb.Address, err)
 		}
 		mb.port = port
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(mb.ConnectDelay): //silent period
+		}
 	}
 	return nil
 }
@@ -81,6 +98,52 @@ func (mb *serialPort) logf(format string, v ...interface{}) {
 	}
 }
 
+func (mb *serialPort) shouldRecover(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+func (mb *serialPort) reconnect(ctx context.Context, err error, linkRecoveryDeadline time.Time) error {
+	if mb.LinkRecoveryTimeout == 0 || time.Until(linkRecoveryDeadline) < 0 {
+		return fmt.Errorf("modbus: link recovery timeout reached: %w", err)
+	}
+
+	mb.logf("modbus: connection reset, reconnecting")
+	recoveryErr := err
+	if cerr := mb.close(); cerr != nil {
+		recoveryErr = errors.Join(recoveryErr, cerr)
+		mb.logf("modbus: error closing connection: %v", cerr)
+	}
+
+	deadlineTimer := time.NewTimer(time.Until(linkRecoveryDeadline))
+	defer deadlineTimer.Stop()
+	retryTicker := time.NewTicker(mb.reconnectRetryInterval())
+	defer retryTicker.Stop()
+
+	for {
+		if cerr := mb.connect(ctx); cerr == nil {
+			return nil
+		} else {
+			recoveryErr = errors.Join(recoveryErr, cerr)
+			mb.logf("modbus: error reconnecting: %v", cerr)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadlineTimer.C:
+			return fmt.Errorf("modbus: link recovery timeout reached: %w", recoveryErr)
+		case <-retryTicker.C:
+		}
+	}
+}
+
+func (mb *serialPort) reconnectRetryInterval() time.Duration {
+	if mb.ReconnectRetryInterval > 0 {
+		return mb.ReconnectRetryInterval
+	}
+	return serialReconnectRetryInterval
+}
+
 func (mb *serialPort) startCloseTimer() {
 	if mb.IdleTimeout <= 0 {
 		return
@@ -103,6 +166,6 @@ func (mb *serialPort) closeIdle() {
 
 	if idle := time.Since(mb.lastActivity); idle >= mb.IdleTimeout {
 		mb.logf("modbus: closing connection due to idle timeout: %v", idle)
-		mb.close()
+		_ = mb.close()
 	}
 }

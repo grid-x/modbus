@@ -7,7 +7,6 @@ package modbus
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -56,6 +55,7 @@ func NewRTUClientHandler(address string) *RTUClientHandler {
 	handler.Address = address
 	handler.Timeout = serialTimeout
 	handler.IdleTimeout = serialIdleTimeout
+	handler.ReconnectRetryInterval = serialReconnectRetryInterval
 	return handler
 }
 
@@ -168,7 +168,7 @@ func readIncrementally(slaveID, functionCode byte, r io.Reader, deadline time.Ti
 
 	for {
 		if time.Now().After(deadline) { // Possible that serialport may spew data
-			return nil, errors.New("failed to read from serial port within deadline")
+			return nil, fmt.Errorf("failed to read from serial port within deadline: %w", context.DeadlineExceeded)
 		}
 
 		if _, err := io.ReadAtLeast(r, buf, 1); err != nil {
@@ -264,24 +264,48 @@ func (mb *rtuSerialTransporter) Send(ctx context.Context, aduRequest []byte) (ad
 	mb.lastActivity = time.Now()
 	mb.startCloseTimer()
 
-	// Send the request
-	mb.logf("modbus: send % x\n", aduRequest)
-	if _, err = mb.port.Write(aduRequest); err != nil {
+	linkRecoveryDeadline := time.Now().Add(mb.LinkRecoveryTimeout)
+
+	for {
+		// Send the request
+		mb.logf("modbus: send % x\n", aduRequest)
+		if _, err = mb.port.Write(aduRequest); err != nil {
+			if mb.shouldRecover(err) {
+				if err = mb.reconnect(ctx, err, linkRecoveryDeadline); err != nil {
+					return
+				}
+				continue
+			}
+
+			return
+		}
+		bytesToRead := calculateResponseLength(aduRequest)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(mb.calculateDelay(len(aduRequest) + bytesToRead)):
+		}
+
+		connDeadline := time.Now().Add(mb.Timeout)
+		aduResponse, err = readIncrementally(aduRequest[0], aduRequest[1], mb.port, connDeadline)
+		if aduResponse != nil {
+			mb.logf("modbus: recv % x\n", aduResponse[:])
+		}
+
+		if err != nil {
+			if mb.shouldRecover(err) {
+				if err = mb.reconnect(ctx, err, linkRecoveryDeadline); err != nil {
+					return
+				}
+				continue
+			}
+			// Unknown error
+			mb.logf("modbus: read error: %v", err)
+			return
+		}
 		return
 	}
-	// function := aduRequest[1]
-	// functionFail := aduRequest[1] & 0x80
-	bytesToRead := calculateResponseLength(aduRequest)
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(mb.calculateDelay(len(aduRequest) + bytesToRead)):
-	}
 
-	data, err := readIncrementally(aduRequest[0], aduRequest[1], mb.port, time.Now().Add(mb.Config.Timeout))
-	mb.logf("modbus: recv % x\n", data[:])
-	aduResponse = data
-	return
 }
 
 // calculateDelay roughly calculates time needed for the next frame.
