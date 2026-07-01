@@ -271,10 +271,10 @@ func TestRTUSerialTransporter_RecoveryDisabledOnReadEOF(t *testing.T) {
 
 	_, err := transporter.Send(context.Background(), req)
 	if err == nil {
-		t.Fatal("expected link recovery timeout error, got nil")
+		t.Fatal("expected link recovery error, got nil")
 	}
-	if !strings.Contains(err.Error(), "link recovery timeout reached") || !errors.Is(err, io.EOF) {
-		t.Fatalf("expected link recovery timeout wrapping EOF, got %v", err)
+	if !strings.Contains(err.Error(), "no link recovery configured") || !errors.Is(err, io.EOF) {
+		t.Fatalf("expected no link recovery configured wrapping EOF, got %v", err)
 	}
 	if got := port.written.Bytes(); !bytes.Equal(got, req) {
 		t.Fatalf("expected request %x, got %x", req, got)
@@ -297,10 +297,10 @@ func TestRTUSerialTransporter_ReconnectBudgetExhaustedOnReadEOF(t *testing.T) {
 	_, err := transporter.Send(context.Background(), req)
 	elapsed := time.Since(start)
 	if err == nil {
-		t.Fatal("expected link recovery timeout error, got nil")
+		t.Fatal("expected link recovery exhausted error, got nil")
 	}
-	if !strings.Contains(err.Error(), "link recovery timeout reached") {
-		t.Fatalf("expected link recovery timeout error, got %v", err)
+	if !strings.Contains(err.Error(), "link recovery exhausted") {
+		t.Fatalf("expected link recovery exhausted error, got %v", err)
 	}
 	if !strings.Contains(err.Error(), "could not open") {
 		t.Fatalf("expected reconnect open failure to be wrapped, got %v", err)
@@ -334,8 +334,8 @@ func TestRTUSerialTransporter_ReconnectOnWriteEOF(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected reconnect error after write EOF, got nil")
 	}
-	if !strings.Contains(err.Error(), "link recovery timeout reached") || !strings.Contains(err.Error(), "could not open") {
-		t.Fatalf("expected timed-out reconnect open failure, got %v", err)
+	if !strings.Contains(err.Error(), "link recovery exhausted") || !strings.Contains(err.Error(), "could not open") {
+		t.Fatalf("expected link recovery exhausted with reconnect failure, got %v", err)
 	}
 	if elapsed < recoveryTimeout-20*time.Millisecond {
 		t.Fatalf("expected recovery to keep retrying for about %v, returned after %v", recoveryTimeout, elapsed)

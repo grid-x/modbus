@@ -31,12 +31,18 @@ type ASCIIClientHandler struct {
 }
 
 // NewASCIIClientHandler allocates and initializes a ASCIIClientHandler.
+// The handler uses exponential backoff (100ms-5s) with 30s timeout by default for link recovery.
 func NewASCIIClientHandler(address string) *ASCIIClientHandler {
 	handler := &ASCIIClientHandler{}
 	handler.Address = address
 	handler.Timeout = serialTimeout
 	handler.IdleTimeout = serialIdleTimeout
-	handler.ReconnectRetryInterval = serialReconnectRetryInterval
+	// Default exponential backoff for RS485: 100ms→2s with 30s timeout
+	handler.LinkRecoveryBackoff = NewExponentialBackoff(
+		100*time.Millisecond, // Initial interval (RS485-appropriate)
+		5*time.Second,        // Max interval cap
+		30*time.Second,       // Timeout
+	)
 	return handler
 }
 
@@ -183,14 +189,12 @@ func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (
 	mb.lastActivity = time.Now()
 	mb.startCloseTimer()
 
-	linkRecoveryDeadline := time.Now().Add(mb.LinkRecoveryTimeout)
-
 	for {
 		// Send the request
 		mb.logf("modbus: send % x\n", aduRequest)
 		if _, err = mb.port.Write(aduRequest); err != nil {
 			if mb.shouldRecover(err) {
-				if err = mb.reconnect(ctx, err, linkRecoveryDeadline); err != nil {
+				if err = mb.reconnect(ctx, err); err != nil {
 					return
 				}
 				continue
@@ -206,7 +210,7 @@ func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (
 		}
 		if err != nil {
 			if mb.shouldRecover(err) {
-				if err = mb.reconnect(ctx, err, linkRecoveryDeadline); err != nil {
+				if err = mb.reconnect(ctx, err); err != nil {
 					return
 				}
 				continue

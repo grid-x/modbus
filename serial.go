@@ -19,8 +19,6 @@ const (
 	// Default timeout
 	serialTimeout     = 5 * time.Second
 	serialIdleTimeout = 60 * time.Second
-	// Retry interval while spending the link recovery budget on reconnects.
-	serialReconnectRetryInterval = 10 * time.Millisecond
 )
 
 // serialPort has configuration and I/O controller.
@@ -33,17 +31,22 @@ type serialPort struct {
 	IdleTimeout time.Duration
 	// Silent period after successful connection
 	ConnectDelay time.Duration
-	// Recovery timeout if the connection is lost
+	// Deprecated: Use LinkRecoveryBackoff.Timeout instead.
 	LinkRecoveryTimeout time.Duration
-	// Interval between reconnect attempts while spending the link recovery budget.
-	// Zero or negative values fall back to the default retry interval.
+	// Deprecated: LinkRecoveryBackoff with FixedBackoff().
 	ReconnectRetryInterval time.Duration
+
+	// LinkRecoveryBackoff defines the unified retry strategy for link recovery.
+	// Controls retry intervals, timeout budget, and max attempts.
+	LinkRecoveryBackoff *BackoffStrategy
 
 	mu sync.Mutex
 	// port is platform-dependent data structure for serial port.
 	port         io.ReadWriteCloser
 	lastActivity time.Time
 	closeTimer   *time.Timer
+	// autoMigratedBackoff is a cached strategy created from deprecated fields
+	autoMigratedBackoff *BackoffStrategy
 }
 
 func (mb *serialPort) Connect(ctx context.Context) (err error) {
@@ -102,9 +105,11 @@ func (mb *serialPort) shouldRecover(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
-func (mb *serialPort) reconnect(ctx context.Context, err error, linkRecoveryDeadline time.Time) error {
-	if mb.LinkRecoveryTimeout == 0 || time.Until(linkRecoveryDeadline) < 0 {
-		return fmt.Errorf("modbus: link recovery timeout reached: %w", err)
+func (mb *serialPort) reconnect(ctx context.Context, err error) error {
+	strategy := mb.getLinkRecoveryBackoff()
+	if strategy == nil {
+		// No recovery configured
+		return fmt.Errorf("modbus: no link recovery configured: %w", err)
 	}
 
 	mb.logf("modbus: connection reset, reconnecting")
@@ -114,34 +119,65 @@ func (mb *serialPort) reconnect(ctx context.Context, err error, linkRecoveryDead
 		mb.logf("modbus: error closing connection: %v", cerr)
 	}
 
-	deadlineTimer := time.NewTimer(time.Until(linkRecoveryDeadline))
-	defer deadlineTimer.Stop()
-	retryTicker := time.NewTicker(mb.reconnectRetryInterval())
-	defer retryTicker.Stop()
+	start := time.Now()
+	attempt := 0
 
 	for {
+		elapsed := time.Since(start)
+		if !strategy.ShouldRetry(attempt, elapsed) {
+			return fmt.Errorf("modbus: link recovery exhausted: %w", recoveryErr)
+		}
+
 		if cerr := mb.connect(ctx); cerr == nil {
 			return nil
 		} else {
 			recoveryErr = errors.Join(recoveryErr, cerr)
-			mb.logf("modbus: error reconnecting: %v", cerr)
+			mb.logf("modbus: reconnect attempt %d failed: %v", attempt, cerr)
 		}
+
+		interval := strategy.Next(attempt)
+		attempt++
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-deadlineTimer.C:
-			return fmt.Errorf("modbus: link recovery timeout reached: %w", recoveryErr)
-		case <-retryTicker.C:
+		case <-time.After(interval):
 		}
 	}
 }
 
-func (mb *serialPort) reconnectRetryInterval() time.Duration {
-	if mb.ReconnectRetryInterval > 0 {
-		return mb.ReconnectRetryInterval
+func (mb *serialPort) getLinkRecoveryBackoff() *BackoffStrategy {
+	if mb.LinkRecoveryBackoff != nil {
+		return mb.LinkRecoveryBackoff
 	}
-	return serialReconnectRetryInterval
+
+	// Auto-migrate from deprecated fields
+	if mb.LinkRecoveryTimeout > 0 || mb.ReconnectRetryInterval > 0 {
+		if mb.autoMigratedBackoff == nil {
+			mb.logf("modbus: LinkRecoveryTimeout and ReconnectRetryInterval are deprecated, use LinkRecoveryBackoff instead")
+			interval := mb.ReconnectRetryInterval
+			if interval <= 0 {
+				interval = 100 * time.Millisecond
+			}
+			timeout := mb.LinkRecoveryTimeout
+			if timeout <= 0 {
+				timeout = 30 * time.Second // Default 30s timeout
+			}
+			// Use exponential backoff: 100ms→2s with configured timeout
+			mb.autoMigratedBackoff = &BackoffStrategy{
+				Type:            BackoffExponential,
+				InitialInterval: interval,
+				MaxInterval:     2 * time.Second,
+				Multiplier:      2.0,
+				Timeout:         timeout,
+				MaxAttempts:     0,
+			}
+		}
+		return mb.autoMigratedBackoff
+	}
+
+	// No recovery configured
+	return nil
 }
 
 func (mb *serialPort) startCloseTimer() {

@@ -44,6 +44,8 @@ type TCPClientHandler struct {
 }
 
 // NewTCPClientHandler allocates a new TCPClientHandler with the given options.
+// The handler uses exponential backoff (10ms-5s) with 30s timeout by default for link recovery.
+// This is appropriate for TCP network links. For custom backoff, set LinkRecoveryBackoff explicitly.
 func NewTCPClientHandler(address string, options ...TCPClientHandlerOption) *TCPClientHandler {
 	h := &TCPClientHandler{}
 	for _, o := range options {
@@ -55,6 +57,19 @@ func NewTCPClientHandler(address string, options ...TCPClientHandlerOption) *TCP
 	if h.Dial == nil {
 		h.Dial = defaultDialFunc(h.Timeout)
 	}
+	// Default exponential backoff for TCP: 10ms initial, suitable for faster network recovery
+	h.LinkRecoveryBackoff = NewExponentialBackoff(
+		10*time.Millisecond, // Initial interval (network-appropriate)
+		5*time.Second,       // Max interval
+		30*time.Second,      // Timeout
+	)
+	// Default protocol recovery for transaction ID mismatches: 10ms with 100ms timeout
+	// Protocol recovery is just processing junk data, fail fast if it persists
+	h.ProtocolRecoveryBackoff = NewExponentialBackoff(
+		10*time.Millisecond,  // Initial interval
+		50*time.Millisecond,  // Max interval
+		100*time.Millisecond, // Timeout (fail fast for junk data)
+	)
 	return h
 }
 
@@ -167,12 +182,20 @@ type tcpTransporter struct {
 	// If zero, disables the caching of TCP connections and only uses dialed
 	// connections for a single Send.
 	IdleTimeout time.Duration
-	// Recovery timeout if tcp communication misbehaves
+	// Deprecated: Use LinkRecoveryBackoff.Timeout instead.
 	LinkRecoveryTimeout time.Duration
-	// Recovery timeout if the protocol is malformed, e.g. wrong transaction ID
+	// Deprecated: Use ProtocolRecoveryBackoff.Timeout instead.
 	ProtocolRecoveryTimeout time.Duration
 	// Silent period after successful connection
 	ConnectDelay time.Duration
+	// LinkRecoveryBackoff defines the unified retry strategy for link recovery.
+	// Controls retry intervals, timeout budget, and max attempts for connection failures.
+	// If nil, uses deprecated LinkRecoveryTimeout if set, otherwise no recovery.
+	LinkRecoveryBackoff *BackoffStrategy
+	// ProtocolRecoveryBackoff defines the unified retry strategy for protocol recovery.
+	// Controls timeout budget and max attempts for transaction ID mismatches.
+	// If nil, uses deprecated ProtocolRecoveryTimeout if set, otherwise no recovery.
+	ProtocolRecoveryBackoff *BackoffStrategy
 	// Transmission logger
 	Logger Logger
 
@@ -190,6 +213,10 @@ type tcpTransporter struct {
 	lastSuccessfulTransactionID uint16
 
 	tlsConfig *tls.Config
+
+	// Cached strategies created from deprecated timeout fields
+	autoMigratedLinkBackoff     *BackoffStrategy
+	autoMigratedProtocolBackoff *BackoffStrategy
 }
 
 // helper value to signify what to do in Send
@@ -211,10 +238,19 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 	}
 
 	var data [tcpMaxLength]byte
-	linkRecoveryDeadline := time.Now().Add(mb.LinkRecoveryTimeout)
-	protocolRecoveryDeadline := time.Now().Add(mb.ProtocolRecoveryTimeout)
+	linkStrategy := mb.getLinkRecoveryBackoff()
+	protoStrategy := mb.getProtocolRecoveryBackoff()
+	linkStart := time.Now()
+	linkAttempt := 0
 
 	for {
+		// Check link recovery budget if strategy is configured
+		if linkStrategy != nil && linkAttempt > 0 {
+			elapsed := time.Since(linkStart)
+			if !linkStrategy.ShouldRetry(linkAttempt, elapsed) {
+				return nil, fmt.Errorf("modbus: link recovery exhausted")
+			}
+		}
 		// Establish a new connection if not connected
 		if err = mb.connect(ctx); err != nil {
 			err = fmt.Errorf("modbus: connect: %w", err)
@@ -260,6 +296,22 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 		}
 
 		mb.lastAttemptedTransactionID = binary.BigEndian.Uint16(aduRequest)
+
+		// Calculate deadlines from strategies
+		linkRecoveryDeadline := time.Time{}
+		if linkStrategy != nil && linkStrategy.Timeout > 0 {
+			linkRecoveryDeadline = linkStart.Add(linkStrategy.Timeout)
+		} else if mb.LinkRecoveryTimeout > 0 {
+			linkRecoveryDeadline = time.Now().Add(mb.LinkRecoveryTimeout)
+		}
+
+		protocolRecoveryDeadline := time.Time{}
+		if protoStrategy != nil && protoStrategy.Timeout > 0 {
+			protocolRecoveryDeadline = time.Now().Add(protoStrategy.Timeout)
+		} else if mb.ProtocolRecoveryTimeout > 0 {
+			protocolRecoveryDeadline = time.Now().Add(mb.ProtocolRecoveryTimeout)
+		}
+
 		var res readResult
 		aduResponse, res, err = mb.readResponse(aduRequest, data[:], linkRecoveryDeadline, protocolRecoveryDeadline)
 		if err != nil {
@@ -281,14 +333,29 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 				err = fmt.Errorf("modbus: read response: %w", err)
 			} else {
 				mb.lastSuccessfulTransactionID = binary.BigEndian.Uint16(aduResponse)
+				linkAttempt = 0 // Reset on success
 			}
 			return
 		case readResultRetry:
 			mb.logf("modbus: retry reading response, because of %v", err)
 			continue
 		case readResultCloseRetry:
-			mb.logf("modbus: close connection and retry reading response, because of %v", err)
+			mb.logf("modbus: close connection and retry, attempt %d, because of %v", linkAttempt, err)
 			mb.close()
+
+			// Apply backoff delay if configured
+			if linkStrategy != nil {
+				interval := linkStrategy.Next(linkAttempt)
+				if interval > 0 {
+					select {
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					case <-time.After(interval):
+					}
+				}
+			}
+			linkAttempt++
+
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -306,13 +373,12 @@ func (mb *tcpTransporter) shouldRecover(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET)
 }
 
-
 func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryDeadline time.Time, protocolDeadline time.Time) (aduResponse []byte, res readResult, err error) {
 	// res is readResultDone by default, which either means we succeeded or err contains the fatal error
 	for {
 		if _, err = io.ReadFull(mb.conn, data[:tcpHeaderSize]); err != nil {
 			// recovery disabled or deadline reached - report error
-			if mb.LinkRecoveryTimeout == 0 || time.Until(recoveryDeadline) < 0 {
+			if recoveryDeadline.IsZero() || time.Until(recoveryDeadline) < 0 {
 				return
 			}
 			if mb.shouldRecover(err) {
@@ -324,7 +390,7 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 		aduResponse, err = mb.processResponse(data[:]) // this also does io
 		if err != nil {
 			// recovery disabled or deadline reached - report error
-			if mb.LinkRecoveryTimeout == 0 || time.Until(recoveryDeadline) < 0 {
+			if recoveryDeadline.IsZero() || time.Until(recoveryDeadline) < 0 {
 				return
 			}
 			if mb.shouldRecover(err) {
@@ -542,4 +608,52 @@ func (mb *tcpTransporter) closeIdle() {
 		mb.logf("modbus: closing connection due to idle timeout: %v", idle)
 		mb.close()
 	}
+}
+
+func (mb *tcpTransporter) getLinkRecoveryBackoff() *BackoffStrategy {
+	if mb.LinkRecoveryBackoff != nil {
+		return mb.LinkRecoveryBackoff
+	}
+
+	// Auto-migrate from deprecated LinkRecoveryTimeout
+	if mb.LinkRecoveryTimeout > 0 {
+		if mb.autoMigratedLinkBackoff == nil {
+			mb.logf("modbus: LinkRecoveryTimeout is deprecated, use LinkRecoveryBackoff instead")
+			mb.autoMigratedLinkBackoff = &BackoffStrategy{
+				Type:            BackoffFixed,
+				InitialInterval: 0, // No delay by default
+				MaxInterval:     0,
+				Timeout:         mb.LinkRecoveryTimeout,
+				MaxAttempts:     0,
+			}
+		}
+		return mb.autoMigratedLinkBackoff
+	}
+
+	// No recovery configured by default
+	return nil
+}
+
+func (mb *tcpTransporter) getProtocolRecoveryBackoff() *BackoffStrategy {
+	if mb.ProtocolRecoveryBackoff != nil {
+		return mb.ProtocolRecoveryBackoff
+	}
+
+	// Auto-migrate from deprecated ProtocolRecoveryTimeout
+	if mb.ProtocolRecoveryTimeout > 0 {
+		if mb.autoMigratedProtocolBackoff == nil {
+			mb.logf("modbus: ProtocolRecoveryTimeout is deprecated, use ProtocolRecoveryBackoff instead")
+			mb.autoMigratedProtocolBackoff = &BackoffStrategy{
+				Type:            BackoffFixed,
+				InitialInterval: 0, // No delay for protocol recovery
+				MaxInterval:     0,
+				Timeout:         mb.ProtocolRecoveryTimeout,
+				MaxAttempts:     0,
+			}
+		}
+		return mb.autoMigratedProtocolBackoff
+	}
+
+	// No protocol recovery by default
+	return nil
 }

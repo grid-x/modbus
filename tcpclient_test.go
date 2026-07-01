@@ -639,6 +639,225 @@ func BenchmarkTCPEncoder(b *testing.B) {
 	}
 }
 
+func TestTCPReconnect_WithExponentialBackoff(t *testing.T) {
+	// Count reconnection attempts via dial calls
+	dialAttempts := 0
+	handler := NewTCPClientHandler("test:502", WithDialer(
+		func(_ context.Context, _, _ string) (net.Conn, error) {
+			dialAttempts++
+			// Create a connection that fails on read (triggers readResultCloseRetry)
+			_, cliConn := net.Pipe()
+			return &failReadConn{Conn: cliConn, readErr: io.EOF}, nil
+		},
+	))
+	handler.Timeout = 20 * time.Millisecond
+	handler.LinkRecoveryBackoff = &BackoffStrategy{
+		Type:            BackoffExponential,
+		InitialInterval: 5 * time.Millisecond,
+		MaxInterval:     50 * time.Millisecond,
+		Multiplier:      2.0,
+		Timeout:         150 * time.Millisecond,
+		MaxAttempts:     0,
+	}
+	timeout := handler.LinkRecoveryBackoff.Timeout
+
+	tr := &handler.tcpTransporter
+	req := []byte{0, 1, 0, 0, 0, 2, 0, 3}
+
+	start := time.Now()
+	_, err := tr.Send(context.Background(), req)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected read errors to exhaust recovery timeout")
+	}
+
+	// With exponential backoff (5ms, 10ms, 20ms, 40ms, 50ms...),
+	// should get multiple retry attempts but fewer than with no backoff
+	if dialAttempts < 2 {
+		t.Fatalf("expected multiple reconnect attempts with backoff, got %d", dialAttempts)
+	}
+	if dialAttempts > 10 {
+		t.Fatalf("expected exponential backoff to limit attempts, got %d", dialAttempts)
+	}
+
+	// Verify it respects the timeout
+	if elapsed > timeout+50*time.Millisecond {
+		t.Fatalf("took too long: %v > %v", elapsed, timeout)
+	}
+
+	t.Logf("Dial attempts: %d, elapsed: %v", dialAttempts, elapsed)
+}
+
+func TestTCPReconnect_WithLinearBackoff(t *testing.T) {
+	dialAttempts := 0
+	handler := NewTCPClientHandler("test:502", WithDialer(
+		func(_ context.Context, _, _ string) (net.Conn, error) {
+			dialAttempts++
+			_, cliConn := net.Pipe()
+			return &failReadConn{Conn: cliConn, readErr: io.EOF}, nil
+		},
+	))
+	handler.Timeout = 20 * time.Millisecond
+	handler.LinkRecoveryBackoff = &BackoffStrategy{
+		Type:            BackoffLinear,
+		InitialInterval: 10 * time.Millisecond,
+		MaxInterval:     30 * time.Millisecond,
+		Multiplier:      1.0,
+		Timeout:         120 * time.Millisecond,
+		MaxAttempts:     0,
+	}
+	timeout := handler.LinkRecoveryBackoff.Timeout
+
+	tr := &handler.tcpTransporter
+	req := []byte{0, 1, 0, 0, 0, 2, 0, 3}
+
+	start := time.Now()
+	_, err := tr.Send(context.Background(), req)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected connection to fail")
+	}
+
+	// With linear backoff (10ms, 20ms, 30ms, 30ms...), should get moderate attempts
+	if dialAttempts < 2 {
+		t.Fatalf("expected multiple reconnect attempts, got %d", dialAttempts)
+	}
+
+	// Should respect timeout
+	if elapsed > timeout+50*time.Millisecond {
+		t.Fatalf("took too long: %v", elapsed)
+	}
+
+	t.Logf("Dial attempts: %d, elapsed: %v", dialAttempts, elapsed)
+}
+
+func TestTCPReconnect_BackoffRespectsDeadline(t *testing.T) {
+	dialAttempts := 0
+	handler := NewTCPClientHandler("test:502", WithDialer(
+		func(_ context.Context, _, _ string) (net.Conn, error) {
+			dialAttempts++
+			_, cliConn := net.Pipe()
+			return &failReadConn{Conn: cliConn, readErr: io.EOF}, nil
+		},
+	))
+	handler.Timeout = 10 * time.Millisecond
+	handler.LinkRecoveryBackoff = &BackoffStrategy{
+		Type:            BackoffExponential,
+		InitialInterval: 10 * time.Millisecond,
+		MaxInterval:     5 * time.Second, // Large max
+		Multiplier:      2.0,
+		Timeout:         60 * time.Millisecond,
+		MaxAttempts:     0,
+	}
+	timeout := handler.LinkRecoveryBackoff.Timeout
+
+	tr := &handler.tcpTransporter
+	req := []byte{0, 1, 0, 0, 0, 2, 0, 3}
+
+	start := time.Now()
+	_, err := tr.Send(context.Background(), req)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected connection to fail")
+	}
+
+	// Must not exceed timeout significantly
+	if elapsed > timeout+50*time.Millisecond {
+		t.Fatalf("exceeded timeout: elapsed=%v timeout=%v", elapsed, timeout)
+	}
+
+	t.Logf("Dial attempts: %d, elapsed: %v", dialAttempts, elapsed)
+}
+
+func TestTCPReconnect_NoBackoffByDefault(t *testing.T) {
+	dialAttempts := 0
+	handler := NewTCPClientHandler("test:502", WithDialer(
+		func(_ context.Context, _, _ string) (net.Conn, error) {
+			dialAttempts++
+			_, cliConn := net.Pipe()
+			return &failReadConn{Conn: cliConn, readErr: io.EOF}, nil
+		},
+	))
+	handler.Timeout = 10 * time.Millisecond
+	handler.LinkRecoveryBackoff = &BackoffStrategy{
+		Type:            BackoffFixed,
+		InitialInterval: 0, // No delay
+		MaxInterval:     0,
+		Timeout:         60 * time.Millisecond,
+		MaxAttempts:     0,
+	}
+	// No delay between retries (interval = 0)
+
+	tr := &handler.tcpTransporter
+	req := []byte{0, 1, 0, 0, 0, 2, 0, 3}
+
+	start := time.Now()
+	_, err := tr.Send(context.Background(), req)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected connection to fail")
+	}
+
+	// Without backoff, should get more attempts in the same time window
+	// compared to with backoff
+	if dialAttempts < 2 {
+		t.Fatalf("expected multiple fast reconnect attempts, got %d", dialAttempts)
+	}
+
+	t.Logf("Dial attempts (no backoff): %d, elapsed: %v", dialAttempts, elapsed)
+}
+
+func TestTCPReconnect_ResetAttemptOnSuccess(t *testing.T) {
+	attemptCount := 0
+	srvConn, cliConn := net.Pipe()
+	t.Cleanup(func() {
+		srvConn.Close()
+		cliConn.Close()
+	})
+
+	handler := NewTCPClientHandler("test:502", WithDialer(
+		func(_ context.Context, _, _ string) (net.Conn, error) {
+			attemptCount++
+			return cliConn, nil
+		},
+	))
+	handler.Timeout = 100 * time.Millisecond
+	handler.LinkRecoveryBackoff = &BackoffStrategy{
+		Type:            BackoffExponential,
+		InitialInterval: 10 * time.Millisecond,
+		MaxInterval:     100 * time.Millisecond,
+		Multiplier:      2.0,
+		Timeout:         200 * time.Millisecond,
+		MaxAttempts:     0,
+	}
+
+	tr := &handler.tcpTransporter
+
+	// Mock server response
+	go func() {
+		buf := make([]byte, 260)
+		_, _ = srvConn.Read(buf)
+		// Send valid response
+		response := []byte{0, 1, 0, 0, 0, 3, 0, 3, 0}
+		_, _ = srvConn.Write(response)
+	}()
+
+	req := []byte{0, 1, 0, 0, 0, 3, 0, 3, 0}
+	_, err := tr.Send(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+
+	// Should only dial once for successful connection
+	if attemptCount != 1 {
+		t.Fatalf("expected 1 dial for successful connection, got %d", attemptCount)
+	}
+}
+
 func BenchmarkTCPDecoder(b *testing.B) {
 	decoder := tcpPackager{
 		SlaveID: 10,

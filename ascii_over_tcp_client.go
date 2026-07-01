@@ -16,12 +16,27 @@ type ASCIIOverTCPClientHandler struct {
 }
 
 // NewASCIIOverTCPClientHandler allocates and initializes a ASCIIOverTCPClientHandler.
+// The handler uses exponential backoff (10ms-5s) with 30s timeout by default for link recovery.
+// This is appropriate for TCP network links. For custom backoff, set LinkRecoveryBackoff explicitly.
 func NewASCIIOverTCPClientHandler(address string) *ASCIIOverTCPClientHandler {
 	handler := &ASCIIOverTCPClientHandler{}
 	handler.Address = address
 	handler.Timeout = tcpTimeout
 	handler.IdleTimeout = tcpIdleTimeout
 	handler.Dial = defaultDialFunc(handler.Timeout)
+	// Default exponential backoff for TCP: 10ms initial, suitable for faster network recovery
+	handler.LinkRecoveryBackoff = NewExponentialBackoff(
+		10*time.Millisecond, // Initial interval (network-appropriate)
+		5*time.Second,       // Max interval
+		30*time.Second,      // Timeout
+	)
+	// Default protocol recovery for transaction ID mismatches: 10ms with 100ms timeout
+	// Protocol recovery is just processing junk data, fail fast if it persists
+	handler.ProtocolRecoveryBackoff = NewExponentialBackoff(
+		10*time.Millisecond,  // Initial interval
+		50*time.Millisecond,  // Max interval
+		100*time.Millisecond, // Timeout (fail fast for junk data)
+	)
 	return handler
 }
 
