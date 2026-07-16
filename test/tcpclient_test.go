@@ -28,7 +28,9 @@ func TestTCPClientAdvancedUsage(t *testing.T) {
 	handler.SlaveID = 1
 	handler.Logger = log.Default()
 	ctx := context.Background()
-	handler.Connect(ctx)
+	if err := handler.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
 	defer handler.Close()
 
 	client := modbus.NewClient(handler)
