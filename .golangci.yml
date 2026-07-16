@@ -2,22 +2,13 @@ version: "2"
 linters:
   default: none
   enable:
+    - staticcheck
+    - gosec
+    - govet
     - revive
   exclusions:
-    generated: lax
     presets:
       - comments
       - common-false-positives
       - legacy
       - std-error-handling
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
-formatters:
-  exclusions:
-    generated: lax
-    paths:
-      - third_party$
-      - builtin$
-      - examples$

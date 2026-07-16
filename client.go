@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"math"
 )
 
 // Logger is the interface to the required logging functions
@@ -301,9 +302,13 @@ func (mb *client) WriteMultipleCoils(ctx context.Context, address, quantity uint
 		err = fmt.Errorf("modbus: quantity '%v' must be between '%v' and '%v',", quantity, 1, 1968)
 		return
 	}
+	requestData, err := dataBlockSuffix(value, address, quantity)
+	if err != nil {
+		return nil, err
+	}
 	request := ProtocolDataUnit{
 		FunctionCode: FuncCodeWriteMultipleCoils,
-		Data:         dataBlockSuffix(value, address, quantity),
+		Data:         requestData,
 	}
 	response, err := mb.send(ctx, &request)
 	if err != nil {
@@ -346,9 +351,13 @@ func (mb *client) WriteMultipleRegisters(ctx context.Context, address, quantity 
 		err = fmt.Errorf("modbus: quantity '%v' must be between '%v' and '%v',", quantity, 1, 123)
 		return
 	}
+	requestData, err := dataBlockSuffix(value, address, quantity)
+	if err != nil {
+		return nil, err
+	}
 	request := ProtocolDataUnit{
 		FunctionCode: FuncCodeWriteMultipleRegisters,
-		Data:         dataBlockSuffix(value, address, quantity),
+		Data:         requestData,
 	}
 	response, err := mb.send(ctx, &request)
 	if err != nil {
@@ -443,9 +452,13 @@ func (mb *client) ReadWriteMultipleRegisters(ctx context.Context, readAddress, r
 		err = fmt.Errorf("modbus: quantity to write '%v' must be between '%v' and '%v',", writeQuantity, 1, 121)
 		return
 	}
+	requestData, err := dataBlockSuffix(value, readAddress, readQuantity, writeAddress, writeQuantity)
+	if err != nil {
+		return nil, err
+	}
 	request := ProtocolDataUnit{
 		FunctionCode: FuncCodeReadWriteMultipleRegisters,
-		Data:         dataBlockSuffix(value, readAddress, readQuantity, writeAddress, writeQuantity),
+		Data:         requestData,
 	}
 	response, err := mb.send(ctx, &request)
 	if err != nil {
@@ -648,7 +661,7 @@ func (mb *client) send(ctx context.Context, request *ProtocolDataUnit) (response
 		err = responseError(response)
 		return
 	}
-	if response.Data == nil || len(response.Data) == 0 {
+	if len(response.Data) == 0 {
 		// Empty response
 		err = fmt.Errorf("modbus: response data is empty")
 		return
@@ -666,20 +679,27 @@ func dataBlock(value ...uint16) []byte {
 }
 
 // dataBlockSuffix creates a sequence of uint16 data and append the suffix plus its length.
-func dataBlockSuffix(suffix []byte, value ...uint16) []byte {
+func dataBlockSuffix(suffix []byte, value ...uint16) ([]byte, error) {
+	if len(suffix) > math.MaxUint8 {
+		return nil, fmt.Errorf("modbus: suffix length '%v' exceeds maximum '%v'", len(suffix), math.MaxUint8)
+	}
 	length := 2 * len(value)
 	data := make([]byte, length+1+len(suffix))
 	for i, v := range value {
 		binary.BigEndian.PutUint16(data[i*2:], v)
 	}
-	data[length] = uint8(len(suffix))
+	var suffixLength byte
+	for range suffix {
+		suffixLength++
+	}
+	data[length] = suffixLength
 	copy(data[length+1:], suffix)
-	return data
+	return data, nil
 }
 
 func responseError(response *ProtocolDataUnit) error {
 	mbError := &Error{FunctionCode: response.FunctionCode}
-	if response.Data != nil && len(response.Data) > 0 {
+	if len(response.Data) > 0 {
 		mbError.ExceptionCode = response.Data[0]
 	}
 	return mbError

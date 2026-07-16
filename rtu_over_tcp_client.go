@@ -75,7 +75,8 @@ func (mb *rtuTCPTransporter) Send(ctx context.Context, aduRequest []byte) (aduRe
 		return
 	}
 	// if the function is correct
-	if data[1] == function {
+	switch data[1] {
+	case function:
 		// we read the rest of the bytes
 		if n < bytesToRead {
 			if bytesToRead > rtuMinSize && bytesToRead <= rtuMaxSize {
@@ -83,7 +84,7 @@ func (mb *rtuTCPTransporter) Send(ctx context.Context, aduRequest []byte) (aduRe
 				n += n1
 			}
 		}
-	} else if data[1] == functionFail {
+	case functionFail:
 		// for error we need to read 5 bytes
 		if n < rtuExceptionSize {
 			n1, err = io.ReadFull(mb.conn, data[n:rtuExceptionSize])

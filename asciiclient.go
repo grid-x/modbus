@@ -202,7 +202,7 @@ func (mb *asciiSerialTransporter) Send(ctx context.Context, aduRequest []byte) (
 		connDeadline := time.Now().Add(mb.Timeout)
 		aduResponse, err = readASCII(mb.port, connDeadline)
 		if aduResponse != nil {
-			mb.logf("modbus: recv % x\n", aduResponse[:])
+			mb.logf("modbus: recv % x\n", aduResponse)
 		}
 		if err != nil {
 			if mb.shouldRecover(err) {

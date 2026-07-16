@@ -143,11 +143,17 @@ func (mb *tcpPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 
 	// Transaction identifier
 	transactionID := atomic.AddUint32(&mb.transactionID, 1)
-	binary.BigEndian.PutUint16(adu, uint16(transactionID))
+	binary.BigEndian.PutUint16(adu, uint16(transactionID&0xffff))
 	// Protocol identifier
 	binary.BigEndian.PutUint16(adu[2:], tcpProtocolIdentifier)
 	// Length = sizeof(SlaveID) + sizeof(FunctionCode) + Data
-	length := uint16(1 + 1 + len(pdu.Data))
+	if len(pdu.Data) > tcpMaxLength-tcpHeaderSize-1 {
+		return nil, fmt.Errorf("modbus: length of data '%v' must not be bigger than '%v'", len(pdu.Data), tcpMaxLength-tcpHeaderSize-1)
+	}
+	length := uint16(2)
+	for range pdu.Data {
+		length++
+	}
 	binary.BigEndian.PutUint16(adu[4:], length)
 	// Unit identifier
 	adu[6] = mb.SlaveID
@@ -376,7 +382,7 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 			}
 			return
 		}
-		aduResponse, err = mb.processResponse(data[:]) // this also does io
+		aduResponse, err = mb.processResponse(data) // this also does io
 		if err != nil {
 			if mb.shouldRecover(err) {
 				// The socket is gone rather than misaligned: nothing of this frame is
