@@ -70,7 +70,7 @@ func (mb *serialPort) connect(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(mb.ConnectDelay): //silent period
+		case <-time.After(mb.ConnectDelay): // silent period
 		}
 	}
 	return nil

@@ -99,7 +99,7 @@ func (mb *rtuPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	checksum := crc.value()
 
 	adu[length-1] = byte(checksum >> 8)
-	adu[length-2] = byte(checksum)
+	adu[length-2] = byte(checksum & 0x00ff)
 	return
 }
 
@@ -289,7 +289,7 @@ func (mb *rtuSerialTransporter) Send(ctx context.Context, aduRequest []byte) (ad
 		connDeadline := time.Now().Add(mb.Timeout)
 		aduResponse, err = readIncrementally(aduRequest[0], aduRequest[1], mb.port, connDeadline)
 		if aduResponse != nil {
-			mb.logf("modbus: recv % x\n", aduResponse[:])
+			mb.logf("modbus: recv % x\n", aduResponse)
 		}
 
 		if err != nil {

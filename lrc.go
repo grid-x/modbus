@@ -29,5 +29,5 @@ func (lrc *lrc) pushBytes(data []byte) *lrc {
 
 func (lrc *lrc) value() byte {
 	// Return twos complement
-	return uint8(-int8(lrc.sum))
+	return ^lrc.sum + 1
 }

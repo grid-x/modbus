@@ -46,7 +46,7 @@ type Client interface {
 	// register's current contents. The function returns
 	// AND-mask and OR-mask.
 	MaskWriteRegister(ctx context.Context, address, andMask, orMask uint16) (results []byte, err error)
-	//ReadFIFOQueue reads the contents of a First-In-First-Out (FIFO) queue
+	// ReadFIFOQueue reads the contents of a First-In-First-Out (FIFO) queue
 	// of register in a remote device and returns FIFO value register.
 	ReadFIFOQueue(ctx context.Context, address uint16) (results []byte, err error)
 
