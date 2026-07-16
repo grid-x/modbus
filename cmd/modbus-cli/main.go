@@ -24,6 +24,10 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	var opt option
 	// general
 	flag.StringVar(&opt.address, "address", "tcp://127.0.0.1:502", "Example: tcp://127.0.0.1:502, rtu:///dev/ttyUSB0, rtutcp://127.0.0.1:502")
@@ -71,34 +75,34 @@ func main() {
 
 	if len(os.Args) == 1 {
 		flag.PrintDefaults()
-		return
+		return 0
 	}
 
 	logger := slog.Default()
 	readDeviceCode, err := toReadDeviceIDCode(*readDeviceIDCode)
 	if err != nil {
 		logger.Error(err.Error())
-		os.Exit(-1)
+		return 1
 	}
 	if *fnCode != modbus.FuncCodeReadDeviceIdentification {
 		if _, err := toUint16(*register, "register"); err != nil {
 			logger.Error(err.Error())
-			os.Exit(-1)
+			return 1
 		}
 		if _, err := toUint16(*quantity, "quantity"); err != nil {
 			logger.Error(err.Error())
-			os.Exit(-1)
+			return 1
 		}
 	}
 	if _, err := toByte(opt.slaveID, "slave ID"); err != nil {
 		logger.Error(err.Error())
-		os.Exit(-1)
+		return 1
 	}
 
 	if *fnCode == modbus.FuncCodeReadDeviceIdentification && readDeviceCode == modbus.ReadDeviceIDCodeSpecific {
 		if _, err := toByte(*readDeviceIDObject, "object ID"); err != nil {
 			logger.Error(err.Error())
-			os.Exit(-1)
+			return 1
 		}
 	}
 
@@ -121,14 +125,14 @@ func main() {
 	handler, err := newHandler(opt)
 	if err != nil {
 		logger.Error(err.Error())
-		os.Exit(-1)
+		return 1
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	if err := handler.Connect(ctx); err != nil {
 		logger.Error(err.Error())
-		os.Exit(-1)
+		return 1
 	}
 	defer handler.Close()
 
@@ -139,7 +143,7 @@ func main() {
 		logger.Info("ignoring crc error: %+v\n", "error", err)
 	} else if err != nil {
 		logger.Error(err.Error())
-		os.Exit(-1)
+		return 1
 	}
 
 	var res string
@@ -150,7 +154,7 @@ func main() {
 		startReg, err := toUint16(*register, "register")
 		if err != nil {
 			logger.Error(err.Error())
-			os.Exit(-1)
+			return 1
 		}
 		switch *pType {
 		case "raw":
@@ -164,7 +168,7 @@ func main() {
 
 	if err != nil {
 		logger.Error(err.Error())
-		os.Exit(-1)
+		return 1
 	}
 
 	logger.Info(res)
@@ -172,11 +176,13 @@ func main() {
 	if *filename != "" {
 		if err := resultToFile([]byte(res), *filename); err != nil {
 			logger.Error(err.Error())
-			os.Exit(-1)
+			return 1
 		}
 		fName := *filename
 		logger.Info(fName + " successfully written\n")
 	}
+
+	return 0
 }
 
 func exec(
