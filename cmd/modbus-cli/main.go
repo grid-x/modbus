@@ -193,8 +193,8 @@ func exec(
 		}
 		result, err = client.WriteSingleCoil(ctx, uint16(register), v)
 	case 0x06:
-		max := float64(math.MaxUint16)
-		if wval > max || wval < 0 {
+		maxValue := float64(math.MaxUint16)
+		if wval > maxValue || wval < 0 {
 			err = fmt.Errorf("overflow: %f does not fit into datatype uint16", wval)
 			break
 		}
@@ -247,39 +247,39 @@ func convertToBytes(eType string, order binary.ByteOrder, forcedOrder string, va
 	var err error
 	switch eType {
 	case "int16":
-		max := float64(math.MaxInt16)
-		min := float64(math.MinInt16)
-		if val > max || val < min {
+		maxValue := float64(math.MaxInt16)
+		minValue := float64(math.MinInt16)
+		if val > maxValue || val < minValue {
 			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
 			break
 		}
 		buf = w.ToInt16(int16(val))
 	case "int32":
-		max := float64(math.MaxInt32)
-		min := float64(math.MinInt32)
-		if val > max || val < min {
+		maxValue := float64(math.MaxInt32)
+		minValue := float64(math.MinInt32)
+		if val > maxValue || val < minValue {
 			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
 			break
 		}
 		buf = w.ToInt32(int32(val))
 	case "uint16":
-		max := float64(math.MaxUint16)
-		if val > max || val < 0 {
+		maxValue := float64(math.MaxUint16)
+		if val > maxValue || val < 0 {
 			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
 			break
 		}
 		buf = w.ToUint16(uint16(val))
 	case "uint32":
-		max := float64(math.MaxUint32)
-		if val > max || val < 0 {
+		maxValue := float64(math.MaxUint32)
+		if val > maxValue || val < 0 {
 			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
 			break
 		}
 		buf = w.ToUint32(uint32(val))
 	case "float32":
-		max := float64(math.MaxFloat32)
-		min := -float64(math.MaxFloat32)
-		if val > max || val < min {
+		maxValue := float64(math.MaxFloat32)
+		minValue := -float64(math.MaxFloat32)
+		if val > maxValue || val < minValue {
 			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
 			break
 		}

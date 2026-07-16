@@ -200,7 +200,7 @@ func TestTCPReadErrorClosesConnection(t *testing.T) {
 	}
 }
 
-func TestErrTCPHeaderLength_Error(t *testing.T) {
+func TestErrTCPHeaderLength_Error(_ *testing.T) {
 	// should not explode
 	_ = ErrTCPHeaderLength(1000).Error()
 }

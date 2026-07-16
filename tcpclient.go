@@ -306,7 +306,6 @@ func (mb *tcpTransporter) shouldRecover(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET)
 }
 
-
 func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryDeadline time.Time, protocolDeadline time.Time) (aduResponse []byte, res readResult, err error) {
 	// res is readResultDone by default, which either means we succeeded or err contains the fatal error
 	for {
