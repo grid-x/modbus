@@ -298,39 +298,7 @@ func (mb *client) WriteSingleRegister(ctx context.Context, address, value uint16
 //	Starting address      : 2 bytes
 //	Quantity of outputs   : 2 bytes
 func (mb *client) WriteMultipleCoils(ctx context.Context, address, quantity uint16, value []byte) (results []byte, err error) {
-	if quantity < 1 || quantity > 1968 {
-		err = fmt.Errorf("modbus: quantity '%v' must be between '%v' and '%v',", quantity, 1, 1968)
-		return
-	}
-	requestData, err := dataBlockSuffix(value, address, quantity)
-	if err != nil {
-		return nil, err
-	}
-	request := ProtocolDataUnit{
-		FunctionCode: FuncCodeWriteMultipleCoils,
-		Data:         requestData,
-	}
-	response, err := mb.send(ctx, &request)
-	if err != nil {
-		return
-	}
-	// Fixed response length
-	if len(response.Data) != 4 {
-		err = &DataSizeError{ExpectedBytes: 4, ActualBytes: len(response.Data)}
-		return
-	}
-	respValue := binary.BigEndian.Uint16(response.Data)
-	if address != respValue {
-		err = fmt.Errorf("modbus: response address '%v' does not match request '%v'", respValue, address)
-		return
-	}
-	results = response.Data[2:]
-	respValue = binary.BigEndian.Uint16(results)
-	if quantity != respValue {
-		err = fmt.Errorf("modbus: response quantity '%v' does not match request '%v'", respValue, quantity)
-		return
-	}
-	return
+	return mb.writeMultiple(ctx, FuncCodeWriteMultipleCoils, address, quantity, 1968, value)
 }
 
 // Request:
@@ -347,39 +315,7 @@ func (mb *client) WriteMultipleCoils(ctx context.Context, address, quantity uint
 //	Starting address      : 2 bytes
 //	Quantity of registers : 2 bytes
 func (mb *client) WriteMultipleRegisters(ctx context.Context, address, quantity uint16, value []byte) (results []byte, err error) {
-	if quantity < 1 || quantity > 123 {
-		err = fmt.Errorf("modbus: quantity '%v' must be between '%v' and '%v',", quantity, 1, 123)
-		return
-	}
-	requestData, err := dataBlockSuffix(value, address, quantity)
-	if err != nil {
-		return nil, err
-	}
-	request := ProtocolDataUnit{
-		FunctionCode: FuncCodeWriteMultipleRegisters,
-		Data:         requestData,
-	}
-	response, err := mb.send(ctx, &request)
-	if err != nil {
-		return
-	}
-	// Fixed response length
-	if len(response.Data) != 4 {
-		err = &DataSizeError{ExpectedBytes: 4, ActualBytes: len(response.Data)}
-		return
-	}
-	respValue := binary.BigEndian.Uint16(response.Data)
-	if address != respValue {
-		err = fmt.Errorf("modbus: response address '%v' does not match request '%v'", respValue, address)
-		return
-	}
-	results = response.Data[2:]
-	respValue = binary.BigEndian.Uint16(results)
-	if quantity != respValue {
-		err = fmt.Errorf("modbus: response quantity '%v' does not match request '%v'", respValue, quantity)
-		return
-	}
-	return
+	return mb.writeMultiple(ctx, FuncCodeWriteMultipleRegisters, address, quantity, 123, value)
 }
 
 // Request:
@@ -695,6 +631,37 @@ func dataBlockSuffix(suffix []byte, value ...uint16) ([]byte, error) {
 	data[length] = suffixLength
 	copy(data[length+1:], suffix)
 	return data, nil
+}
+
+func (mb *client) writeMultiple(ctx context.Context, functionCode byte, address, quantity, maxQuantity uint16, value []byte) (results []byte, err error) {
+	if quantity < 1 || quantity > maxQuantity {
+		return nil, fmt.Errorf("modbus: quantity '%v' must be between '%v' and '%v',", quantity, 1, maxQuantity)
+	}
+	requestData, err := dataBlockSuffix(value, address, quantity)
+	if err != nil {
+		return nil, err
+	}
+	request := ProtocolDataUnit{
+		FunctionCode: functionCode,
+		Data:         requestData,
+	}
+	response, err := mb.send(ctx, &request)
+	if err != nil {
+		return nil, err
+	}
+	if len(response.Data) != 4 {
+		return nil, &DataSizeError{ExpectedBytes: 4, ActualBytes: len(response.Data)}
+	}
+	respValue := binary.BigEndian.Uint16(response.Data)
+	if address != respValue {
+		return nil, fmt.Errorf("modbus: response address '%v' does not match request '%v'", respValue, address)
+	}
+	results = response.Data[2:]
+	respValue = binary.BigEndian.Uint16(results)
+	if quantity != respValue {
+		return nil, fmt.Errorf("modbus: response quantity '%v' does not match request '%v'", respValue, quantity)
+	}
+	return results, nil
 }
 
 func responseError(response *ProtocolDataUnit) error {
