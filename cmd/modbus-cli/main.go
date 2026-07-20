@@ -75,7 +75,7 @@ func run() int {
 
 	if len(os.Args) == 1 {
 		flag.PrintDefaults()
-		return 0
+		return 2
 	}
 
 	logger := slog.Default()
