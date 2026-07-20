@@ -120,7 +120,7 @@ func (mb *tcpPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 	binary.BigEndian.PutUint16(adu[2:], tcpProtocolIdentifier)
 	// Length = sizeof(SlaveID) + sizeof(FunctionCode) + Data
 	if len(pdu.Data) > tcpMaxLength-tcpHeaderSize-1 {
-		return nil, fmt.Errorf("modbus: length of data '%v' must not be bigger than '%v'", len(pdu.Data), tcpMaxLength-tcpHeaderSize-1)
+		return nil, fmt.Errorf("modbus: length of data '%d' must not be bigger than '%d'", len(pdu.Data), tcpMaxLength-tcpHeaderSize-1)
 	}
 	length := uint16(2)
 	for range pdu.Data {
