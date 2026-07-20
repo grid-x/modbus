@@ -624,11 +624,7 @@ func dataBlockSuffix(suffix []byte, value ...uint16) ([]byte, error) {
 	for i, v := range value {
 		binary.BigEndian.PutUint16(data[i*2:], v)
 	}
-	var suffixLength byte
-	for range suffix {
-		suffixLength++
-	}
-	data[length] = suffixLength
+	data[length] = uint8(len(suffix)) //nolint:gosec // len(suffix) is checked above against math.MaxUint8.
 	copy(data[length+1:], suffix)
 	return data, nil
 }
