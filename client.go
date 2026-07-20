@@ -617,7 +617,7 @@ func dataBlock(value ...uint16) []byte {
 // dataBlockSuffix creates a sequence of uint16 data and append the suffix plus its length.
 func dataBlockSuffix(suffix []byte, value ...uint16) ([]byte, error) {
 	if len(suffix) > math.MaxUint8 {
-		return nil, fmt.Errorf("modbus: suffix length '%v' exceeds maximum '%v'", len(suffix), math.MaxUint8)
+		return nil, fmt.Errorf("modbus: suffix length '%d' exceeds maximum '%d'", len(suffix), math.MaxUint8)
 	}
 	length := 2 * len(value)
 	data := make([]byte, length+1+len(suffix))
