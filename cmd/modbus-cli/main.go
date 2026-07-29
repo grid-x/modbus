@@ -24,6 +24,10 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	var opt option
 	// general
 	flag.StringVar(&opt.address, "address", "tcp://127.0.0.1:502", "Example: tcp://127.0.0.1:502, rtu:///dev/ttyUSB0, rtutcp://127.0.0.1:502")
@@ -71,26 +75,36 @@ func main() {
 
 	if len(os.Args) == 1 {
 		flag.PrintDefaults()
-		return
+		return 2
 	}
 
 	logger := slog.Default()
+	readDeviceCode, err := toReadDeviceIDCode(*readDeviceIDCode)
+	if err != nil {
+		logger.Error(err.Error())
+		return 1
+	}
 	if *fnCode != modbus.FuncCodeReadDeviceIdentification {
-		if *register > math.MaxUint16 || *register < 0 {
-			intRegister := *register
-			logger.Error("invalid register value: " + strconv.Itoa(intRegister))
-			os.Exit(-1)
+		if _, err := toUint16(*register, "register"); err != nil {
+			logger.Error(err.Error())
+			return 1
+		}
+		if _, err := toUint16(*quantity, "quantity"); err != nil {
+			logger.Error(err.Error())
+			return 1
 		}
 	}
-
-	if *fnCode == modbus.FuncCodeReadDeviceIdentification && modbus.ReadDeviceIDCode(*readDeviceIDCode) == modbus.ReadDeviceIDCodeSpecific {
-		if *readDeviceIDObject > math.MaxUint8 || *readDeviceIDObject < 0 {
-			logger.Error("invalid object ID: " + strconv.Itoa(*readDeviceIDObject))
-			os.Exit(-1)
-		}
+	if _, err := toByte(opt.slaveID, "slave ID"); err != nil {
+		logger.Error(err.Error())
+		return 1
 	}
 
-	startReg := uint16(*register)
+	if *fnCode == modbus.FuncCodeReadDeviceIdentification && readDeviceCode == modbus.ReadDeviceIDCodeSpecific {
+		if _, err := toByte(*readDeviceIDObject, "object ID"); err != nil {
+			logger.Error(err.Error())
+			return 1
+		}
+	}
 
 	if *logframe {
 		opt.logger = &debugAdapter{logger}
@@ -111,25 +125,25 @@ func main() {
 	handler, err := newHandler(opt)
 	if err != nil {
 		logger.Error(err.Error())
-		os.Exit(-1)
+		return 1
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	if err := handler.Connect(ctx); err != nil {
 		logger.Error(err.Error())
-		os.Exit(-1)
+		return 1
 	}
 	defer handler.Close()
 
 	client := modbus.NewClient(handler)
 
-	result, err := exec(ctx, client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity, *readDeviceIDCode, *readDeviceIDObject)
+	result, err := exec(ctx, client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity, readDeviceCode, *readDeviceIDObject)
 	if err != nil && strings.Contains(err.Error(), "crc") && *ignoreCRCError {
 		logger.Info("ignoring crc error: %+v\n", "error", err)
 	} else if err != nil {
 		logger.Error(err.Error())
-		os.Exit(-1)
+		return 1
 	}
 
 	var res string
@@ -137,19 +151,24 @@ func main() {
 	case modbus.FuncCodeReadDeviceIdentification:
 		res = string(result)
 	default:
+		startReg, err := toUint16(*register, "register")
+		if err != nil {
+			logger.Error(err.Error())
+			return 1
+		}
 		switch *pType {
 		case "raw":
-			res, err = resultToRawString(result, int(startReg))
+			res, err = resultToRawString(result, int(startReg)) // nolint // err read next
 		case "all":
-			res, err = resultToAllString(result)
+			res, err = resultToAllString(result) // nolint // err read next
 		default:
-			res, err = resultToString(result, po, *readParseOrder, *pType)
+			res, err = resultToString(result, po, *readParseOrder, *pType) // nolint // err read next
 		}
 	}
 
 	if err != nil {
 		logger.Error(err.Error())
-		os.Exit(-1)
+		return 1
 	}
 
 	logger.Info(res)
@@ -157,11 +176,13 @@ func main() {
 	if *filename != "" {
 		if err := resultToFile([]byte(res), *filename); err != nil {
 			logger.Error(err.Error())
-			os.Exit(-1)
+			return 1
 		}
 		fName := *filename
 		logger.Info(fName + " successfully written\n")
 	}
+
+	return 0
 }
 
 func exec(
@@ -174,14 +195,22 @@ func exec(
 	wval float64,
 	etype string,
 	quantity int,
-	readDeviceIDCode int,
+	readDeviceIDCode modbus.ReadDeviceIDCode,
 	readDeviceIDObject int,
 ) ([]byte, error) {
 	var err error
 	var result []byte
+	registerAddr, err := toUint16(register, "register")
+	if err != nil {
+		return nil, err
+	}
+	registerQuantity, err := toUint16(quantity, "quantity")
+	if err != nil {
+		return nil, err
+	}
 	switch fnCode {
 	case 0x01:
-		result, err = client.ReadCoils(ctx, uint16(register), uint16(quantity))
+		result, err = client.ReadCoils(ctx, registerAddr, registerQuantity)
 	case 0x05:
 		const (
 			coilOn  uint16 = 0xFF00
@@ -191,37 +220,45 @@ func exec(
 		if wval > 0 {
 			v = coilOn
 		}
-		result, err = client.WriteSingleCoil(ctx, uint16(register), v)
+		result, err = client.WriteSingleCoil(ctx, registerAddr, v)
 	case 0x06:
-		max := float64(math.MaxUint16)
-		if wval > max || wval < 0 {
+		maxValue := float64(math.MaxUint16)
+		if wval > maxValue || wval < 0 {
 			err = fmt.Errorf("overflow: %f does not fit into datatype uint16", wval)
 			break
 		}
-		result, err = client.WriteSingleRegister(ctx, uint16(register), uint16(wval))
+		result, err = client.WriteSingleRegister(ctx, registerAddr, uint16(wval))
 	case 0x10:
 		var buf []byte
 		buf, err = convertToBytes(etype, o, forcedOrder, wval)
 		if err != nil {
 			break
 		}
-		result, err = client.WriteMultipleRegisters(ctx, uint16(register), uint16(len(buf))/2, buf)
+		writeQuantity, convErr := toUint16(len(buf)/2, "write quantity")
+		if convErr != nil {
+			return nil, convErr
+		}
+		result, err = client.WriteMultipleRegisters(ctx, registerAddr, writeQuantity, buf)
 	case 0x04:
-		result, err = client.ReadInputRegisters(ctx, uint16(register), uint16(quantity))
+		result, err = client.ReadInputRegisters(ctx, registerAddr, registerQuantity)
 	case 0x03:
-		result, err = client.ReadHoldingRegisters(ctx, uint16(register), uint16(quantity))
+		result, err = client.ReadHoldingRegisters(ctx, registerAddr, registerQuantity)
 	case modbus.FuncCodeReadDeviceIdentification:
 		var objects map[byte][]byte
-		if modbus.ReadDeviceIDCode(readDeviceIDCode) == modbus.ReadDeviceIDCodeSpecific {
-			objects, err = client.ReadDeviceIdentificationSpecificObject(ctx, byte(readDeviceIDObject))
+		if readDeviceIDCode == modbus.ReadDeviceIDCodeSpecific {
+			objectID, convErr := toByte(readDeviceIDObject, "object ID")
+			if convErr != nil {
+				return nil, convErr
+			}
+			objects, err = client.ReadDeviceIdentificationSpecificObject(ctx, objectID)
 		} else {
-			objects, err = client.ReadDeviceIdentification(ctx, modbus.ReadDeviceIDCode(readDeviceIDCode))
+			objects, err = client.ReadDeviceIdentification(ctx, readDeviceIDCode)
 		}
 		if err != nil {
 			return nil, err
 		}
 		for key, val := range objects {
-			result = append(result, []byte(fmt.Sprintf("Object ID %d = %s\n", key, val))...)
+			result = append(result, fmt.Appendf(nil, "Object ID %d = %s\n", key, val)...)
 		}
 	default:
 		err = fmt.Errorf("function code %d is unsupported", fnCode)
@@ -247,39 +284,39 @@ func convertToBytes(eType string, order binary.ByteOrder, forcedOrder string, va
 	var err error
 	switch eType {
 	case "int16":
-		max := float64(math.MaxInt16)
-		min := float64(math.MinInt16)
-		if val > max || val < min {
+		maxValue := float64(math.MaxInt16)
+		minValue := float64(math.MinInt16)
+		if val > maxValue || val < minValue {
 			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
 			break
 		}
 		buf = w.ToInt16(int16(val))
 	case "int32":
-		max := float64(math.MaxInt32)
-		min := float64(math.MinInt32)
-		if val > max || val < min {
+		maxValue := float64(math.MaxInt32)
+		minValue := float64(math.MinInt32)
+		if val > maxValue || val < minValue {
 			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
 			break
 		}
 		buf = w.ToInt32(int32(val))
 	case "uint16":
-		max := float64(math.MaxUint16)
-		if val > max || val < 0 {
+		maxValue := float64(math.MaxUint16)
+		if val > maxValue || val < 0 {
 			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
 			break
 		}
 		buf = w.ToUint16(uint16(val))
 	case "uint32":
-		max := float64(math.MaxUint32)
-		if val > max || val < 0 {
+		maxValue := float64(math.MaxUint32)
+		if val > maxValue || val < 0 {
 			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
 			break
 		}
 		buf = w.ToUint32(uint32(val))
 	case "float32":
-		max := float64(math.MaxFloat32)
-		min := -float64(math.MaxFloat32)
-		if val > max || val < min {
+		maxValue := float64(math.MaxFloat32)
+		minValue := -float64(math.MaxFloat32)
+		if val > maxValue || val < minValue {
 			err = fmt.Errorf("overflow: %f does not fit into datatype %s", val, eType)
 			break
 		}
@@ -299,6 +336,7 @@ func convertToBytes(eType string, order binary.ByteOrder, forcedOrder string, va
 }
 
 func resultToFile(r []byte, filename string) error {
+	//nolint:gosec // Generated file should be accessible from other users
 	return os.WriteFile(filename, r, 0o644)
 }
 
@@ -514,11 +552,15 @@ func newHandler(o option) (modbus.ClientHandler, error) {
 	if err != nil {
 		return nil, err
 	}
+	slaveID, err := toByte(o.slaveID, "slave ID")
+	if err != nil {
+		return nil, err
+	}
 	switch u.Scheme {
 	case "rtu":
 		h := modbus.NewRTUClientHandler(u.Path)
 		h.Timeout = o.timeout
-		h.SlaveID = byte(o.slaveID)
+		h.SlaveID = slaveID
 		h.Logger = o.logger
 		h.BaudRate = o.rtu.baudrate
 		h.DataBits = o.rtu.dataBits
@@ -543,6 +585,7 @@ func newHandler(o option) (modbus.ClientHandler, error) {
 			if err != nil {
 				return nil, fmt.Errorf("loading key pair: %w", err)
 			}
+			//nolint:gosec // Explicitly controlled by the CLI flag for test and self-signed endpoints.
 			options = append(options, modbus.WithTLSConfig(&tls.Config{
 				Certificates:       []tls.Certificate{cert},
 				InsecureSkipVerify: o.tcp.insecure,
@@ -550,20 +593,20 @@ func newHandler(o option) (modbus.ClientHandler, error) {
 		}
 		h := modbus.NewTCPClientHandler(u.Host, options...)
 		h.Timeout = o.timeout
-		h.SlaveID = byte(o.slaveID)
+		h.SlaveID = slaveID
 		h.LinkRecoveryTimeout = o.tcp.linkRecoveryTimeout
 		h.ProtocolRecoveryTimeout = o.tcp.protocolRecoveryTimeout
 		h.Logger = o.logger
 		return h, nil
 	case "udp":
 		h := modbus.NewRTUOverUDPClientHandler(u.Host)
-		h.SlaveID = byte(o.slaveID)
+		h.SlaveID = slaveID
 		h.Logger = o.logger
 		return h, nil
 	case "rtutcp":
 		h := modbus.NewRTUOverTCPClientHandler(u.Host)
 		h.Timeout = o.timeout
-		h.SlaveID = byte(o.slaveID)
+		h.SlaveID = slaveID
 		h.LinkRecoveryTimeout = o.tcp.linkRecoveryTimeout
 		h.ProtocolRecoveryTimeout = o.tcp.protocolRecoveryTimeout
 		h.Logger = o.logger
@@ -620,6 +663,37 @@ func (w *writer) ToFloat64(v float64) []byte {
 	w.to(&buf, v)
 	b, _ := io.ReadAll(&buf)
 	return b
+}
+
+func toUint16(v int, name string) (uint16, error) {
+	if v < 0 || v > math.MaxUint16 {
+		return 0, fmt.Errorf("invalid %s value: %s", name, strconv.Itoa(v))
+	}
+	return uint16(v), nil
+}
+
+func toByte(v int, name string) (byte, error) {
+	if v < 0 || v > math.MaxUint8 {
+		return 0, fmt.Errorf("invalid %s value: %s", name, strconv.Itoa(v))
+	}
+	return byte(v), nil
+}
+
+func toReadDeviceIDCode(v int) (modbus.ReadDeviceIDCode, error) {
+	codeValue, err := toByte(v, "device ID code")
+	if err != nil {
+		return 0, err
+	}
+	code := modbus.ReadDeviceIDCode(codeValue)
+	switch code {
+	case modbus.ReadDeviceIDCodeBasic,
+		modbus.ReadDeviceIDCodeRegular,
+		modbus.ReadDeviceIDCodeExtended,
+		modbus.ReadDeviceIDCodeSpecific:
+		return code, nil
+	default:
+		return 0, fmt.Errorf("invalid device ID code value: %s", strconv.Itoa(v))
+	}
 }
 
 func (w *writer) to(buf io.Writer, f interface{}) {

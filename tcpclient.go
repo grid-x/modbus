@@ -115,11 +115,14 @@ func (mb *tcpPackager) Encode(pdu *ProtocolDataUnit) (adu []byte, err error) {
 
 	// Transaction identifier
 	transactionID := atomic.AddUint32(&mb.transactionID, 1)
-	binary.BigEndian.PutUint16(adu, uint16(transactionID))
+	binary.BigEndian.PutUint16(adu, uint16(transactionID&0xffff))
 	// Protocol identifier
 	binary.BigEndian.PutUint16(adu[2:], tcpProtocolIdentifier)
 	// Length = sizeof(SlaveID) + sizeof(FunctionCode) + Data
-	length := uint16(1 + 1 + len(pdu.Data))
+	if len(pdu.Data) > tcpMaxLength-tcpHeaderSize-1 {
+		return nil, fmt.Errorf("modbus: length of data '%d' must not be bigger than '%d'", len(pdu.Data), tcpMaxLength-tcpHeaderSize-1)
+	}
+	length := uint16(2 + len(pdu.Data)) //nolint:gosec // len(pdu.Data) is bounded above by tcpMaxLength-tcpHeaderSize-1.
 	binary.BigEndian.PutUint16(adu[4:], length)
 	// Unit identifier
 	adu[6] = mb.SlaveID
@@ -306,7 +309,6 @@ func (mb *tcpTransporter) shouldRecover(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET)
 }
 
-
 func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryDeadline time.Time, protocolDeadline time.Time) (aduResponse []byte, res readResult, err error) {
 	// res is readResultDone by default, which either means we succeeded or err contains the fatal error
 	for {
@@ -321,7 +323,7 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 			}
 			return
 		}
-		aduResponse, err = mb.processResponse(data[:]) // this also does io
+		aduResponse, err = mb.processResponse(data) // this also does io
 		if err != nil {
 			// recovery disabled or deadline reached - report error
 			if mb.LinkRecoveryTimeout == 0 || time.Until(recoveryDeadline) < 0 {
@@ -373,12 +375,12 @@ func (mb *tcpTransporter) processResponse(data []byte) (aduResponse []byte, err 
 	// Read length, ignore transaction & protocol id (4 bytes)
 	length := int(binary.BigEndian.Uint16(data[4:]))
 	if length <= 0 {
-		mb.flush(data[:])
+		mb.flush(data)
 		err = ErrTCPHeaderLength(length)
 		return
 	}
 	if length > (tcpMaxLength - (tcpHeaderSize - 1)) {
-		mb.flush(data[:])
+		mb.flush(data)
 		err = ErrTCPHeaderLength(length)
 		return
 	}
@@ -473,7 +475,7 @@ func (mb *tcpTransporter) connect(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(mb.ConnectDelay): //silent period
+		case <-time.After(mb.ConnectDelay): // silent period
 		}
 	}
 	return nil

@@ -7,5 +7,5 @@ type debugAdapter struct {
 }
 
 func (log *debugAdapter) Printf(msg string, args ...any) {
-	log.Logger.Debug(msg, args...)
+	log.Debug(msg, args...)
 }

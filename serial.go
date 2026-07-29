@@ -70,7 +70,7 @@ func (mb *serialPort) connect(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(mb.ConnectDelay): //silent period
+		case <-time.After(mb.ConnectDelay): // silent period
 		}
 	}
 	return nil
@@ -120,12 +120,12 @@ func (mb *serialPort) reconnect(ctx context.Context, err error, linkRecoveryDead
 	defer retryTicker.Stop()
 
 	for {
-		if cerr := mb.connect(ctx); cerr == nil {
+		cerr := mb.connect(ctx)
+		if cerr == nil {
 			return nil
-		} else {
-			recoveryErr = errors.Join(recoveryErr, cerr)
-			mb.logf("modbus: error reconnecting: %v", cerr)
 		}
+		recoveryErr = errors.Join(recoveryErr, cerr)
+		mb.logf("modbus: error reconnecting: %v", cerr)
 
 		select {
 		case <-ctx.Done():
