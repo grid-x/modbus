@@ -19,6 +19,7 @@ import (
 	"math/big"
 	"net"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 )
@@ -289,6 +290,135 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 	}
 	if !bytes.Equal(resp, data) {
 		t.Fatalf("got wrong response: got %q wanted %q", resp, data)
+	}
+}
+
+// TestTCPMidFrameTimeoutClosesConnection verifies that a read timeout which hit
+// after part of a response header had already been consumed closes the
+// connection. Keeping such a connection leaves the remainder of that frame
+// queued, so the next Send would parse those leftover bytes as a header and the
+// stream would stay misaligned for good.
+func TestTCPMidFrameTimeoutClosesConnection(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Write a partial header - 3 of tcpHeaderSize bytes - and then stall, so
+		// that the client's ReadFull consumes those bytes and then times out.
+		if _, err := conn.Write([]byte{0x00, 0x01, 0x00}); err != nil {
+			t.Error(err)
+			return
+		}
+		// keep the connection open until the main routine is finished
+		<-done
+	}()
+
+	handler := NewTCPClientHandler(ln.Addr().String())
+	handler.Timeout = 200 * time.Millisecond
+	tr := &handler.tcpTransporter
+
+	getConn := func() net.Conn {
+		tr.mu.Lock()
+		defer tr.mu.Unlock()
+		return tr.conn
+	}
+
+	_, err = NewClient(handler).ReadInputRegisters(context.Background(), 0, 1)
+	if !errors.Is(err, ErrStreamDesynced) {
+		t.Fatalf("expected error wrapping %v, got %q", ErrStreamDesynced, err)
+	}
+	if conn := getConn(); conn != nil {
+		t.Fatalf("conn must be nil after a mid-frame timeout, got %v", conn)
+	}
+}
+
+// TestTCPNeverResendsSameTransactionID verifies that the transporter never writes
+// the same ADU to the wire twice. A response that cannot be attributed to the
+// request must close the connection and report, rather than re-sending: an
+// identical frame delivers a duplicate request, and for a write function code the
+// device would execute the command twice.
+func TestTCPNeverResendsSameTransactionID(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	// ADU size of a ReadInputRegisters request: header, function code, address
+	// and quantity.
+	const requestLen = tcpHeaderSize + 1 + 2 + 2
+
+	var (
+		mu       sync.Mutex
+		observed []uint16
+	)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		packager := &tcpPackager{SlaveID: 0}
+		for {
+			req := make([]byte, requestLen)
+			if _, err := io.ReadFull(conn, req); err != nil {
+				return // client closed the connection
+			}
+			mu.Lock()
+			observed = append(observed, binary.BigEndian.Uint16(req))
+			isFirst := len(observed) == 1
+			mu.Unlock()
+
+			resp, err := packager.Encode(&ProtocolDataUnit{
+				FunctionCode: FuncCodeReadInputRegisters,
+				Data:         []byte{0x02, 0xCA, 0xFE},
+			})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if isFirst {
+				// Answer with a transaction ID that is neither the requested one nor a
+				// plausible late response, so that verify fails outside the leniency
+				// window. This is where the transporter used to re-write the identical
+				// request onto the wire.
+				binary.BigEndian.PutUint16(resp, 0xBEEF)
+			} else {
+				binary.BigEndian.PutUint16(resp, binary.BigEndian.Uint16(req))
+			}
+			if _, err := conn.Write(resp); err != nil {
+				return
+			}
+		}
+	}()
+
+	handler := NewTCPClientHandler(ln.Addr().String())
+	handler.Timeout = time.Second
+	// Non-zero, so that the leniency window is evaluated at all.
+	handler.ProtocolRecoveryTimeout = 500 * time.Millisecond
+
+	_, err = NewClient(handler).ReadInputRegisters(context.Background(), 0, 1)
+	if !errors.Is(err, ErrStreamDesynced) {
+		t.Fatalf("expected error wrapping %v, got %q", ErrStreamDesynced, err)
+	}
+	handler.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	// A resend would show up as a second entry carrying the same transaction ID.
+	if len(observed) != 1 {
+		t.Fatalf("expected exactly 1 request on the wire, got %d: %v", len(observed), observed)
 	}
 }
 
