@@ -37,19 +37,30 @@ func (length ErrTCPHeaderLength) Error() string {
 		length, tcpMaxLength-tcpHeaderSize+1)
 }
 
-// ErrStreamDesynced reports that the response stream is no longer aligned to a
-// Modbus frame boundary, so the bytes still buffered on the connection cannot be
-// attributed to any request. It is returned wrapped around the underlying cause.
+// ErrStreamDesynced reports that responses on the connection can no longer be
+// paired with the requests that were sent. It is returned wrapped around the
+// underlying cause, and covers two conditions that cannot be told apart from the
+// outside:
 //
-// A desynchronized connection is not recoverable in place: the transporter
-// closes it so that the next Send dials afresh. Callers that want the request
-// retried must issue it again, which encodes a new transaction ID. The
-// transporter deliberately does not retry by itself — re-writing the same ADU
-// would put a duplicate frame with an identical transaction ID on the wire, and
-// for a write function code that makes the device execute the command twice.
-var ErrStreamDesynced = errors.New("modbus: response stream desynchronized")
+//   - The byte stream is misaligned. A read failed part-way through a frame, so
+//     the rest of that frame is still queued and the next read would parse those
+//     leftover bytes as a header.
+//   - A complete, well-formed frame arrived that cannot be attributed to the
+//     request that was sent, and is not a late response that can be accounted
+//     for. Here the bytes are still frame-aligned, but a request is left
+//     outstanding whose answer would corrupt the next exchange, and there is no
+//     way to tell how many such orphans are queued.
+//
+// Neither is recoverable in place: the transporter closes the connection so that
+// the next Send dials afresh. Callers that want the request retried must issue it
+// again, which encodes a new transaction ID. The transporter deliberately does
+// not retry by itself — re-writing the same ADU would put a duplicate frame with
+// an identical transaction ID on the wire, and for a write function code that
+// makes the device execute the command twice.
+var ErrStreamDesynced = errors.New("modbus: response stream out of sync with requests")
 
-// desynced marks err as a stream desynchronization, see [ErrStreamDesynced].
+// desynced marks err as a loss of request/response pairing, see
+// [ErrStreamDesynced].
 func desynced(err error) error {
 	return fmt.Errorf("%w: %w", ErrStreamDesynced, err)
 }
@@ -292,10 +303,9 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 					// can be drained on the next Send via ProtocolRecoveryTimeout
 					// transaction-ID matching.
 					//
-					// A timeout that hit *mid-frame* is excluded: it leaves a partial
-					// frame in the receive buffer, so the next Send would parse the
-					// remainder of that frame as a header. Such a connection has to
-					// be closed, see [ErrStreamDesynced].
+					// A [ErrStreamDesynced] is excluded: it leaves a partial
+					// frame in the receive buffer. Such a connection has to
+					// be closed.
 					mb.logf("modbus: read response timeout, keeping connection: %v", err)
 				} else {
 					mb.logf("modbus: read response error: closing connection: %v", err)
@@ -333,9 +343,7 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 		if n, err = io.ReadFull(mb.conn, data[:tcpHeaderSize]); err != nil {
 			if n > 0 {
 				// A partial header was consumed, so the remaining bytes of that
-				// frame are still queued and the stream is misaligned. Neither
-				// reading again nor resending the request recovers it; report so
-				// that Send closes the connection. See [ErrStreamDesynced].
+				// frame are still queued and the stream is misaligned.
 				err = desynced(err)
 				return
 			}
@@ -344,9 +352,6 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 				return
 			}
 			if mb.shouldRecover(err) {
-				// Nothing of the frame was consumed, so the remote side closed
-				// before answering at all. Reconnecting and reissuing the request is
-				// safe here: the stream is empty rather than misaligned.
 				mb.logf("modbus: connection closed by remote side: %v", err)
 				res = readResultCloseRetry
 			}
@@ -378,12 +383,12 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 				continue
 			}
 
-			// The response cannot be attributed to the request we sent, and it is
-			// not a late response we can account for. Report it as a desync so that
-			// Send closes the connection: resending the same ADU would put a
-			// duplicate frame with an identical transaction ID on the wire. Retrying
-			// is the caller's decision, and it re-encodes with a fresh transaction
-			// ID. See [ErrStreamDesynced].
+			// A complete frame belonging to neither this request nor an earlier one
+			// we can account for. The bytes are still frame-aligned, but the
+			// request/response pairing is lost: our own request stays outstanding and
+			// its answer would corrupt the next exchange. This is also where a
+			// genuinely misaligned stream ends up, when the tail of an earlier frame
+			// happens to parse as a plausible header. See [ErrStreamDesynced].
 			err = desynced(err)
 			return
 		}
@@ -510,7 +515,7 @@ func (mb *tcpTransporter) connect(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(mb.ConnectDelay): //silent period
+		case <-time.After(mb.ConnectDelay): // silent period
 		}
 	}
 	return nil
