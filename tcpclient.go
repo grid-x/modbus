@@ -378,10 +378,20 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 		}
 		aduResponse, err = mb.processResponse(data[:]) // this also does io
 		if err != nil {
-			// The header was consumed in full, so any failure past this point
-			// leaves the stream mid-frame - whether the announced length was
-			// nonsense (which means the "header" was really the tail of an earlier
-			// frame) or the body read failed part-way through.
+			if mb.shouldRecover(err) {
+				// The socket is gone rather than misaligned: nothing of this frame is
+				// left queued, so a fresh connection starts clean. Same situation as
+				// the header read above, and treated the same way.
+				if mb.LinkRecoveryTimeout != 0 && time.Until(recoveryDeadline) >= 0 && isRepeatable(aduRequest) {
+					mb.logf("modbus: connection closed by remote side: %v", err)
+					reconnectAndReissue = true
+				}
+				return
+			}
+			// The announced length was nonsense - so what we read as a header was
+			// really the tail of an earlier frame - or the body read failed some
+			// other way with the connection still up. Either way the stream is
+			// mid-frame and cannot be resynchronised.
 			err = desynced(err)
 			return
 		}

@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"math/big"
 	"net"
 	"slices"
@@ -470,14 +469,15 @@ func TestTCPNoResendOnUnattributableResponse(t *testing.T) {
 	}
 }
 
-// countRequests accepts connections on ln and records the function code of every
-// request it reads. The first dropAfter connections are closed without answering,
-// so the client's link recovery engages; any connection after that is answered so
-// the client stops instead of spinning until its recovery budget expires.
+// serveRequests accepts connections on ln and records the function code of every
+// request it reads. For each connection it asks reply what to write back, given
+// the zero-based connection index and the request bytes; returning nil closes
+// without answering, which is what makes the client's link recovery engage. Every
+// connection is closed after the reply, so each recovery attempt gets a fresh one.
 //
 // It registers its own cleanup, so a t.Fatal in the caller cannot leak the
 // listener or the accept goroutine, and returns the codes observed so far.
-func countRequests(t *testing.T, ln net.Listener, dropAfter int) func() []byte {
+func serveRequests(t *testing.T, ln net.Listener, reply func(i int, req []byte) []byte) func() []byte {
 	t.Helper()
 
 	var (
@@ -488,7 +488,7 @@ func countRequests(t *testing.T, ln net.Listener, dropAfter int) func() []byte {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for {
+		for i := 0; ; i++ {
 			conn, err := ln.Accept()
 			if err != nil {
 				return // listener closed
@@ -498,12 +498,8 @@ func countRequests(t *testing.T, ln net.Listener, dropAfter int) func() []byte {
 			if _, err := io.ReadFull(conn, req); err == nil {
 				mu.Lock()
 				codes = append(codes, req[tcpHeaderSize])
-				answer := len(codes) > dropAfter
 				mu.Unlock()
-				if answer {
-					// Any well-formed frame will do: the client only has to stop
-					// reconnecting. An exception response is the shortest one.
-					resp := []byte{req[0], req[1], 0, 0, 0, 3, req[6], req[tcpHeaderSize] | 0x80, ExceptionCodeIllegalDataAddress}
+				if resp := reply(i, req); resp != nil {
 					_, _ = conn.Write(resp)
 				}
 			}
@@ -523,6 +519,20 @@ func countRequests(t *testing.T, ln net.Listener, dropAfter int) func() []byte {
 	}
 }
 
+// exceptionReply is the shortest well-formed response to req. Tests use it when
+// they only need the client to stop reconnecting; the exception itself is not
+// what is under test.
+func exceptionReply(req []byte) []byte {
+	return []byte{req[0], req[1], 0, 0, 0, 3, req[6], req[tcpHeaderSize] | 0x80, ExceptionCodeIllegalDataAddress}
+}
+
+// truncatedReply is a valid MBAP header announcing a four-byte body, with no body
+// following it. The client reads the header, then hits EOF part-way through the
+// frame - which means the socket is gone, not that the stream is misaligned.
+func truncatedReply(req []byte) []byte {
+	return []byte{req[0], req[1], 0, 0, 0, 5, req[6]}
+}
+
 // TestTCPLinkRecoveryDoesNotReissueWrites verifies that a write is not reissued
 // after the remote side drops the connection without answering. The device may
 // have executed it already, and link recovery would repeat it verbatim on every
@@ -532,7 +542,8 @@ func TestTCPLinkRecoveryDoesNotReissueWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observed := countRequests(t, ln, math.MaxInt)
+	// Never answered, so link recovery keeps getting a dead connection.
+	observed := serveRequests(t, ln, func(int, []byte) []byte { return nil })
 
 	handler := NewTCPClientHandler(ln.Addr().String())
 	handler.Timeout = 500 * time.Millisecond
@@ -559,7 +570,12 @@ func TestTCPLinkRecoveryReissuesReads(t *testing.T) {
 	// Drop only the first connection: the reissued read is then answered, so the
 	// client stops after two attempts instead of churning thousands of sockets
 	// until the recovery budget expires.
-	observed := countRequests(t, ln, 1)
+	observed := serveRequests(t, ln, func(i int, req []byte) []byte {
+		if i == 0 {
+			return nil
+		}
+		return exceptionReply(req)
+	})
 
 	handler := NewTCPClientHandler(ln.Addr().String())
 	handler.Timeout = 500 * time.Millisecond
@@ -572,6 +588,65 @@ func TestTCPLinkRecoveryReissuesReads(t *testing.T) {
 
 	if codes := observed(); len(codes) != 2 {
 		t.Errorf("link recovery should have reissued the read, got %d attempts: %v", len(codes), codes)
+	}
+}
+
+// TestTCPLinkRecoveryReissuesReadAfterTruncatedResponse covers the same situation
+// as TestTCPLinkRecoveryReissuesReads, but hit one branch later: the header was
+// consumed and the socket then went away part-way through the body. Nothing of the
+// frame is left queued, so this is a dead connection rather than a misaligned
+// stream, and a read must be reissued on a fresh one just as it is when the
+// header read fails.
+func TestTCPLinkRecoveryReissuesReadAfterTruncatedResponse(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Truncate the first response, answer the reissued one.
+	observed := serveRequests(t, ln, func(i int, req []byte) []byte {
+		if i == 0 {
+			return truncatedReply(req)
+		}
+		return exceptionReply(req)
+	})
+
+	handler := NewTCPClientHandler(ln.Addr().String())
+	handler.Timeout = 500 * time.Millisecond
+	handler.LinkRecoveryTimeout = 500 * time.Millisecond
+
+	if _, err := NewClient(handler).ReadHoldingRegisters(context.Background(), 0, 1); err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	handler.Close()
+
+	if codes := observed(); len(codes) != 2 {
+		t.Errorf("a read should have been reissued after the truncated response, got %d attempts: %v", len(codes), codes)
+	}
+}
+
+// TestTCPLinkRecoveryDoesNotReissueWriteAfterTruncatedResponse is the write half:
+// the device answered far enough to prove it processed the request, so reissuing
+// would execute the command twice.
+func TestTCPLinkRecoveryDoesNotReissueWriteAfterTruncatedResponse(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := serveRequests(t, ln, func(_ int, req []byte) []byte {
+		return truncatedReply(req)
+	})
+
+	handler := NewTCPClientHandler(ln.Addr().String())
+	handler.Timeout = 500 * time.Millisecond
+	handler.LinkRecoveryTimeout = 500 * time.Millisecond
+
+	if _, err := NewClient(handler).WriteSingleRegister(context.Background(), 0, 1); err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	handler.Close()
+
+	if codes := observed(); len(codes) != 1 {
+		t.Errorf("a write must reach the device at most once, got %d attempts: %v", len(codes), codes)
 	}
 }
 
