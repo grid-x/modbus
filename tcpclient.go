@@ -336,6 +336,33 @@ func (mb *tcpTransporter) shouldRecover(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET)
 }
 
+// isRepeatable reports whether aduRequest may be written to the wire a second
+// time. Link recovery reissues the request verbatim after reconnecting, which is
+// harmless for a read but means a device that processed a write before dropping
+// the connection executes it again - once per recovery attempt.
+//
+// Only function codes that are purely read are repeatable. Everything else is
+// treated as a write, including FuncCodeReadWriteMultipleRegisters (which also
+// writes) and any vendor-specific code we cannot reason about: the cost of
+// misjudging a read is one failed request, the cost of misjudging a write is a
+// duplicated command on live equipment.
+func isRepeatable(aduRequest []byte) bool {
+	if len(aduRequest) <= tcpHeaderSize {
+		return false
+	}
+	switch aduRequest[tcpHeaderSize] {
+	case FuncCodeReadCoils,
+		FuncCodeReadDiscreteInputs,
+		FuncCodeReadHoldingRegisters,
+		FuncCodeReadInputRegisters,
+		FuncCodeReadFIFOQueue,
+		FuncCodeReadDeviceIdentification:
+		return true
+	default:
+		return false
+	}
+}
+
 func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryDeadline time.Time, protocolDeadline time.Time) (aduResponse []byte, res readResult, err error) {
 	// res is readResultDone by default, which either means we succeeded or err contains the fatal error
 	for {
@@ -351,7 +378,12 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 			if mb.LinkRecoveryTimeout == 0 || time.Until(recoveryDeadline) < 0 {
 				return
 			}
-			if mb.shouldRecover(err) {
+			if mb.shouldRecover(err) && isRepeatable(aduRequest) {
+				// The stream is empty rather than misaligned, and the request is a
+				// read, so reconnecting and reissuing it has no effect on the device.
+				// A write is reported instead - it may already have been executed
+				// before the connection dropped - leaving the retry to the caller,
+				// which re-encodes with a fresh transaction ID.
 				mb.logf("modbus: connection closed by remote side: %v", err)
 				res = readResultCloseRetry
 			}

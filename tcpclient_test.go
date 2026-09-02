@@ -369,12 +369,14 @@ func TestTCPMidFrameTimeoutClosesConnection(t *testing.T) {
 	}
 }
 
-// TestTCPNeverResendsSameTransactionID verifies that the transporter never writes
-// the same ADU to the wire twice. A response that cannot be attributed to the
-// request must close the connection and report, rather than re-sending: an
-// identical frame delivers a duplicate request, and for a write function code the
-// device would execute the command twice.
-func TestTCPNeverResendsSameTransactionID(t *testing.T) {
+// TestTCPNoResendOnUnattributableResponse verifies that a response which cannot
+// be attributed to the request closes the connection and is reported, rather than
+// re-sending: an identical frame delivers a duplicate request, and for a write
+// function code the device would execute the command twice.
+//
+// Scoped to the protocol-desync path. Link recovery still reissues a *read* after
+// reconnecting - see TestTCPLinkRecovery* below.
+func TestTCPNoResendOnUnattributableResponse(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -446,6 +448,133 @@ func TestTCPNeverResendsSameTransactionID(t *testing.T) {
 	// A resend would show up as a second entry carrying the same transaction ID.
 	if len(observed) != 1 {
 		t.Fatalf("expected exactly 1 request on the wire, got %d: %v", len(observed), observed)
+	}
+}
+
+// countRequestsUntilClientGivesUp accepts connections on ln and records the
+// function code of every request it reads, dropping each connection immediately
+// without answering so that the client's link recovery engages. It returns a stop
+// function that waits for the server goroutine and yields the recorded codes.
+func countRequestsUntilClientGivesUp(t *testing.T, ln net.Listener) func() []byte {
+	t.Helper()
+
+	var (
+		mu    sync.Mutex
+		codes []byte
+		wg    sync.WaitGroup
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return // listener closed
+			}
+			// header + function code is enough to identify the request
+			req := make([]byte, tcpHeaderSize+1)
+			if _, err := io.ReadFull(conn, req); err == nil {
+				mu.Lock()
+				codes = append(codes, req[tcpHeaderSize])
+				mu.Unlock()
+			}
+			conn.Close() // drop without answering
+		}
+	}()
+
+	return func() []byte {
+		ln.Close()
+		wg.Wait()
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]byte{}, codes...)
+	}
+}
+
+// TestTCPLinkRecoveryDoesNotReissueWrites verifies that a write is not reissued
+// after the remote side drops the connection without answering. The device may
+// have executed it already, and link recovery would repeat it verbatim on every
+// attempt until the recovery budget expires.
+func TestTCPLinkRecoveryDoesNotReissueWrites(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := countRequestsUntilClientGivesUp(t, ln)
+
+	handler := NewTCPClientHandler(ln.Addr().String())
+	handler.Timeout = 500 * time.Millisecond
+	handler.LinkRecoveryTimeout = 500 * time.Millisecond
+
+	if _, err := NewClient(handler).WriteSingleRegister(context.Background(), 0, 1); err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	handler.Close()
+
+	if codes := stop(); len(codes) != 1 {
+		t.Errorf("a write must reach the device at most once, got %d attempts: %v", len(codes), codes)
+	}
+}
+
+// TestTCPLinkRecoveryReissuesReads is the counterpart: gating link recovery on
+// the function code must not disable it for reads, where reissuing the request
+// has no effect on the device.
+func TestTCPLinkRecoveryReissuesReads(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := countRequestsUntilClientGivesUp(t, ln)
+
+	handler := NewTCPClientHandler(ln.Addr().String())
+	handler.Timeout = 500 * time.Millisecond
+	handler.LinkRecoveryTimeout = 200 * time.Millisecond
+
+	if _, err := NewClient(handler).ReadHoldingRegisters(context.Background(), 0, 1); err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	handler.Close()
+
+	if codes := stop(); len(codes) < 2 {
+		t.Errorf("link recovery should have reissued the read, got %d attempts: %v", len(codes), codes)
+	}
+}
+
+func TestIsRepeatable(t *testing.T) {
+	adu := func(fc byte) []byte {
+		return []byte{0, 1, 0, 0, 0, 2, 0, fc}
+	}
+
+	cases := []struct {
+		name string
+		adu  []byte
+		want bool
+	}{
+		{"read holding registers", adu(FuncCodeReadHoldingRegisters), true},
+		{"read input registers", adu(FuncCodeReadInputRegisters), true},
+		{"read coils", adu(FuncCodeReadCoils), true},
+		{"read discrete inputs", adu(FuncCodeReadDiscreteInputs), true},
+		{"read FIFO queue", adu(FuncCodeReadFIFOQueue), true},
+		{"read device identification", adu(FuncCodeReadDeviceIdentification), true},
+		{"write single register", adu(FuncCodeWriteSingleRegister), false},
+		{"write multiple registers", adu(FuncCodeWriteMultipleRegisters), false},
+		{"write single coil", adu(FuncCodeWriteSingleCoil), false},
+		{"write multiple coils", adu(FuncCodeWriteMultipleCoils), false},
+		{"mask write register", adu(FuncCodeMaskWriteRegister), false},
+		// Reads as well as writes, so it must not be repeated.
+		{"read/write multiple registers", adu(FuncCodeReadWriteMultipleRegisters), false},
+		// Unknown vendor code: assume it writes.
+		{"vendor specific", adu(0x41), false},
+		// Malformed: no function code to inspect.
+		{"truncated adu", []byte{0, 1, 0, 0, 0, 2, 0}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isRepeatable(tc.adu); got != tc.want {
+				t.Errorf("isRepeatable = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
