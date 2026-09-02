@@ -334,7 +334,22 @@ func TestTCPMidFrameTimeoutClosesConnection(t *testing.T) {
 
 	done := make(chan struct{})
 	defer close(done)
+	// The server reports over a channel rather than calling t.Error itself:
+	// nothing joins this goroutine before the test returns, and a t.Error after
+	// that point panics the whole run.
+	srvErr := make(chan error, 1)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	t.Cleanup(func() {
+		wg.Wait()
+		select {
+		case err := <-srvErr:
+			t.Errorf("server: %v", err)
+		default:
+		}
+	})
 	go func() {
+		defer wg.Done()
 		conn, err := ln.Accept()
 		if err != nil {
 			return
@@ -343,7 +358,7 @@ func TestTCPMidFrameTimeoutClosesConnection(t *testing.T) {
 		// Write a partial header - 3 of tcpHeaderSize bytes - and then stall, so
 		// that the client's ReadFull consumes those bytes and then times out.
 		if _, err := conn.Write([]byte{0x00, 0x01, 0x00}); err != nil {
-			t.Error(err)
+			srvErr <- err
 			return
 		}
 		// keep the connection open until the main routine is finished
@@ -390,8 +405,22 @@ func TestTCPNoResendOnUnattributableResponse(t *testing.T) {
 	var (
 		mu       sync.Mutex
 		observed []uint16
+		wg       sync.WaitGroup
 	)
+	// See TestTCPMidFrameTimeoutClosesConnection: the server must not touch t
+	// from a goroutine the test does not join.
+	srvErr := make(chan error, 1)
+	wg.Add(1)
+	t.Cleanup(func() {
+		wg.Wait()
+		select {
+		case err := <-srvErr:
+			t.Errorf("server: %v", err)
+		default:
+		}
+	})
 	go func() {
+		defer wg.Done()
 		conn, err := ln.Accept()
 		if err != nil {
 			return
@@ -414,7 +443,7 @@ func TestTCPNoResendOnUnattributableResponse(t *testing.T) {
 				Data:         []byte{0x02, 0xCA, 0xFE},
 			})
 			if err != nil {
-				t.Error(err)
+				srvErr <- err
 				return
 			}
 			if isFirst {
