@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"net"
 	"slices"
@@ -125,6 +126,13 @@ type failReadConn struct {
 func (c *failReadConn) Read(_ []byte) (int, error)  { return 0, c.readErr }
 func (c *failReadConn) Write(b []byte) (int, error) { return len(b), nil }
 
+// currentConn reads the transporter's connection under its mutex.
+func currentConn(tr *tcpTransporter) net.Conn {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	return tr.conn
+}
+
 // TestTCPWriteErrorClosesConnection any write error must set
 // mb.conn to nil so that the next Send() dials a fresh connection rather than
 // reusing a dead socket.
@@ -142,12 +150,6 @@ func TestTCPWriteErrorClosesConnection(t *testing.T) {
 	handler.Timeout = time.Second
 	tr := &handler.tcpTransporter
 
-	getConn := func() net.Conn {
-		tr.mu.Lock()
-		defer tr.mu.Unlock()
-		return tr.conn
-	}
-
 	req := []byte{0, 1, 0, 0, 0, 2, 0, 3} // TID=1, PID=0, Len=2, Unit=0, FC=3
 	if _, err := tr.Send(context.Background(), req); err == nil {
 		t.Fatal("expected write error, got nil")
@@ -155,7 +157,7 @@ func TestTCPWriteErrorClosesConnection(t *testing.T) {
 
 	// conn must be nil so the next Send() re-dials
 	// via connect() rather than writing on a dead socket.
-	if conn := getConn(); conn != nil {
+	if conn := currentConn(tr); conn != nil {
 		t.Fatalf("conn must be nil after write error, got %v", conn)
 	}
 	if dialCalls != 1 {
@@ -163,9 +165,9 @@ func TestTCPWriteErrorClosesConnection(t *testing.T) {
 	}
 }
 
-// TestTCPReadErrorClosesConnection verifies that a fatal read error (readResultDone
-// with err != nil) sets mb.conn to nil so the next Send() dials a fresh
-// connection rather than reusing a socket with an unknown receive-buffer state.
+// TestTCPReadErrorClosesConnection verifies that a fatal read error sets mb.conn
+// to nil so the next Send() dials a fresh connection rather than reusing a socket
+// with an unknown receive-buffer state.
 func TestTCPReadErrorClosesConnection(t *testing.T) {
 	_, cliConn := net.Pipe()
 	t.Cleanup(func() { cliConn.Close() })
@@ -180,12 +182,6 @@ func TestTCPReadErrorClosesConnection(t *testing.T) {
 	handler.Timeout = time.Second
 	tr := &handler.tcpTransporter
 
-	getConn := func() net.Conn {
-		tr.mu.Lock()
-		defer tr.mu.Unlock()
-		return tr.conn
-	}
-
 	req := []byte{0, 1, 0, 0, 0, 2, 0, 3} // TID=1, PID=0, Len=2, Unit=0, FC=3
 	if _, err := tr.Send(context.Background(), req); err == nil {
 		t.Fatal("expected read error, got nil")
@@ -193,7 +189,7 @@ func TestTCPReadErrorClosesConnection(t *testing.T) {
 
 	// conn must be nil so the next Send() re-dials rather than reading
 	// stale bytes from a socket whose receive buffer is in an unknown state.
-	if conn := getConn(); conn != nil {
+	if conn := currentConn(tr); conn != nil {
 		t.Fatalf("conn must be nil after read error, got %v", conn)
 	}
 	if dialCalls != 1 {
@@ -369,17 +365,11 @@ func TestTCPMidFrameTimeoutClosesConnection(t *testing.T) {
 	handler.Timeout = 200 * time.Millisecond
 	tr := &handler.tcpTransporter
 
-	getConn := func() net.Conn {
-		tr.mu.Lock()
-		defer tr.mu.Unlock()
-		return tr.conn
-	}
-
 	_, err = NewClient(handler).ReadInputRegisters(context.Background(), 0, 1)
 	if !errors.Is(err, ErrStreamDesynced) {
 		t.Fatalf("expected error wrapping %v, got %q", ErrStreamDesynced, err)
 	}
-	if conn := getConn(); conn != nil {
+	if conn := currentConn(tr); conn != nil {
 		t.Fatalf("conn must be nil after a mid-frame timeout, got %v", conn)
 	}
 }
@@ -480,11 +470,14 @@ func TestTCPNoResendOnUnattributableResponse(t *testing.T) {
 	}
 }
 
-// countRequestsUntilClientGivesUp accepts connections on ln and records the
-// function code of every request it reads, dropping each connection immediately
-// without answering so that the client's link recovery engages. It returns a stop
-// function that waits for the server goroutine and yields the recorded codes.
-func countRequestsUntilClientGivesUp(t *testing.T, ln net.Listener) func() []byte {
+// countRequests accepts connections on ln and records the function code of every
+// request it reads. The first dropAfter connections are closed without answering,
+// so the client's link recovery engages; any connection after that is answered so
+// the client stops instead of spinning until its recovery budget expires.
+//
+// It registers its own cleanup, so a t.Fatal in the caller cannot leak the
+// listener or the accept goroutine, and returns the codes observed so far.
+func countRequests(t *testing.T, ln net.Listener, dropAfter int) func() []byte {
 	t.Helper()
 
 	var (
@@ -505,15 +498,25 @@ func countRequestsUntilClientGivesUp(t *testing.T, ln net.Listener) func() []byt
 			if _, err := io.ReadFull(conn, req); err == nil {
 				mu.Lock()
 				codes = append(codes, req[tcpHeaderSize])
+				answer := len(codes) > dropAfter
 				mu.Unlock()
+				if answer {
+					// Any well-formed frame will do: the client only has to stop
+					// reconnecting. An exception response is the shortest one.
+					resp := []byte{req[0], req[1], 0, 0, 0, 3, req[6], req[tcpHeaderSize] | 0x80, ExceptionCodeIllegalDataAddress}
+					_, _ = conn.Write(resp)
+				}
 			}
-			conn.Close() // drop without answering
+			conn.Close()
 		}
 	}()
 
-	return func() []byte {
+	t.Cleanup(func() {
 		ln.Close()
 		wg.Wait()
+	})
+
+	return func() []byte {
 		mu.Lock()
 		defer mu.Unlock()
 		return append([]byte{}, codes...)
@@ -529,7 +532,7 @@ func TestTCPLinkRecoveryDoesNotReissueWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stop := countRequestsUntilClientGivesUp(t, ln)
+	observed := countRequests(t, ln, math.MaxInt)
 
 	handler := NewTCPClientHandler(ln.Addr().String())
 	handler.Timeout = 500 * time.Millisecond
@@ -540,7 +543,7 @@ func TestTCPLinkRecoveryDoesNotReissueWrites(t *testing.T) {
 	}
 	handler.Close()
 
-	if codes := stop(); len(codes) != 1 {
+	if codes := observed(); len(codes) != 1 {
 		t.Errorf("a write must reach the device at most once, got %d attempts: %v", len(codes), codes)
 	}
 }
@@ -553,18 +556,21 @@ func TestTCPLinkRecoveryReissuesReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stop := countRequestsUntilClientGivesUp(t, ln)
+	// Drop only the first connection: the reissued read is then answered, so the
+	// client stops after two attempts instead of churning thousands of sockets
+	// until the recovery budget expires.
+	observed := countRequests(t, ln, 1)
 
 	handler := NewTCPClientHandler(ln.Addr().String())
 	handler.Timeout = 500 * time.Millisecond
-	handler.LinkRecoveryTimeout = 200 * time.Millisecond
+	handler.LinkRecoveryTimeout = 500 * time.Millisecond
 
 	if _, err := NewClient(handler).ReadHoldingRegisters(context.Background(), 0, 1); err == nil {
 		t.Fatal("expected an error, got nil")
 	}
 	handler.Close()
 
-	if codes := stop(); len(codes) < 2 {
+	if codes := observed(); len(codes) != 2 {
 		t.Errorf("link recovery should have reissued the read, got %d attempts: %v", len(codes), codes)
 	}
 }
@@ -584,7 +590,9 @@ func TestIsRepeatable(t *testing.T) {
 		{"read coils", adu(FuncCodeReadCoils), true},
 		{"read discrete inputs", adu(FuncCodeReadDiscreteInputs), true},
 		{"read FIFO queue", adu(FuncCodeReadFIFOQueue), true},
-		{"read device identification", adu(FuncCodeReadDeviceIdentification), true},
+		// Encapsulated Interface Transport: only MEI type 14 is a read, MEI type 13
+		// can write, and the MEI byte is past what the predicate inspects.
+		{"read device identification", adu(FuncCodeReadDeviceIdentification), false},
 		{"write single register", adu(FuncCodeWriteSingleRegister), false},
 		{"write multiple registers", adu(FuncCodeWriteMultipleRegisters), false},
 		{"write single coil", adu(FuncCodeWriteSingleCoil), false},

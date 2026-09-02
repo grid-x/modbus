@@ -220,14 +220,6 @@ type tcpTransporter struct {
 	tlsConfig *tls.Config
 }
 
-// helper value to signify what to do in Send
-type readResult int
-
-const (
-	readResultDone readResult = iota
-	readResultCloseRetry
-)
-
 // Send sends data to server and ensures response length is greater than header length.
 func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduResponse []byte, err error) {
 	mb.mu.Lock()
@@ -260,6 +252,13 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 			}
 		}
 
+		// Recorded before the write, not after: close() collapses the late-response
+		// window onto this value, and on a write error it must name the request we
+		// are attempting rather than the previous one - otherwise the window still
+		// spans this transaction and a frame carrying its ID would be drained as a
+		// late response on the next connection.
+		mb.lastAttemptedTransactionID = binary.BigEndian.Uint16(aduRequest)
+
 		// Send data
 		mb.logf("modbus: send % x", aduRequest)
 		if _, err = mb.conn.Write(aduRequest); err != nil {
@@ -286,37 +285,13 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 			return
 		}
 
-		mb.lastAttemptedTransactionID = binary.BigEndian.Uint16(aduRequest)
-		var res readResult
-		aduResponse, res, err = mb.readResponse(aduRequest, data[:], linkRecoveryDeadline, protocolRecoveryDeadline)
+		var reconnectAndReissue bool
+		aduResponse, reconnectAndReissue, err = mb.readResponse(aduRequest, data[:], linkRecoveryDeadline, protocolRecoveryDeadline)
 		if err != nil {
-			mb.logf("modbus: read response error: %v, res: %v", err, res)
+			mb.logf("modbus: read response error: %v, reconnect: %v", err, reconnectAndReissue)
 		}
-		switch res {
-		case readResultDone:
-			if err != nil {
-				var netErr net.Error
-				if errors.As(err, &netErr) && netErr.Timeout() && !errors.Is(err, ErrStreamDesynced) {
-					// Clean timeout: nothing of the response was consumed, so the
-					// stream is still aligned to a frame boundary and the device may
-					// simply be slow. Keep the connection open so the late response
-					// can be drained on the next Send via ProtocolRecoveryTimeout
-					// transaction-ID matching.
-					//
-					// A [ErrStreamDesynced] is excluded: it leaves a partial
-					// frame in the receive buffer. Such a connection has to
-					// be closed.
-					mb.logf("modbus: read response timeout, keeping connection: %v", err)
-				} else {
-					mb.logf("modbus: read response error: closing connection: %v", err)
-					mb.close()
-				}
-				err = fmt.Errorf("modbus: read response: %w", err)
-			} else {
-				mb.lastSuccessfulTransactionID = binary.BigEndian.Uint16(aduResponse)
-			}
-			return
-		case readResultCloseRetry:
+
+		if reconnectAndReissue {
 			mb.logf("modbus: close connection and retry reading response, because of %v", err)
 			mb.close()
 			select {
@@ -325,10 +300,30 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 			default:
 				continue
 			}
-		default:
-			mb.logf("modbus: unhandled read result %v", res)
-			return nil, fmt.Errorf("modbus: unhandled read result %v", res)
 		}
+
+		if err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() && !errors.Is(err, ErrStreamDesynced) {
+				// Clean timeout: nothing of the response was consumed, so the
+				// stream is still aligned to a frame boundary and the device may
+				// simply be slow. Keep the connection open so the late response
+				// can be drained on the next Send via ProtocolRecoveryTimeout
+				// transaction-ID matching.
+				//
+				// A desync leaves a partial frame queued, so that connection
+				// cannot be kept - see [ErrStreamDesynced].
+				mb.logf("modbus: read response timeout, keeping connection: %v", err)
+			} else {
+				mb.logf("modbus: read response error: closing connection: %v", err)
+				mb.close()
+			}
+			err = fmt.Errorf("modbus: read response: %w", err)
+			return
+		}
+
+		mb.lastSuccessfulTransactionID = binary.BigEndian.Uint16(aduResponse)
+		return
 	}
 }
 
@@ -337,40 +332,32 @@ func (mb *tcpTransporter) shouldRecover(err error) bool {
 }
 
 // isRepeatable reports whether aduRequest may be written to the wire a second
-// time. Link recovery reissues the request verbatim after reconnecting, which is
-// harmless for a read but means a device that processed a write before dropping
-// the connection executes it again - once per recovery attempt.
-//
-// Only function codes that are purely read are repeatable. Everything else is
-// treated as a write, including FuncCodeReadWriteMultipleRegisters (which also
-// writes) and any vendor-specific code we cannot reason about: the cost of
-// misjudging a read is one failed request, the cost of misjudging a write is a
-// duplicated command on live equipment.
+// time, i.e. whether reissuing it during link recovery is free of side effects on
+// the device. The policy lives in funcCodeRepeatable; this only knows where MBAP
+// keeps the function code.
 func isRepeatable(aduRequest []byte) bool {
 	if len(aduRequest) <= tcpHeaderSize {
 		return false
 	}
-	switch aduRequest[tcpHeaderSize] {
-	case FuncCodeReadCoils,
-		FuncCodeReadDiscreteInputs,
-		FuncCodeReadHoldingRegisters,
-		FuncCodeReadInputRegisters,
-		FuncCodeReadFIFOQueue,
-		FuncCodeReadDeviceIdentification:
-		return true
-	default:
-		return false
-	}
+	return funcCodeRepeatable(aduRequest[tcpHeaderSize])
 }
 
-func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryDeadline time.Time, protocolDeadline time.Time) (aduResponse []byte, res readResult, err error) {
-	// res is readResultDone by default, which either means we succeeded or err contains the fatal error
+// readResponse reads one response frame. It returns reconnectAndReissue when the
+// caller should drop the connection, redial and write the request again - only
+// ever for a request that is safe to repeat, see [funcCodeRepeatable]. Otherwise
+// err is nil on success, or holds the failure to report.
+func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryDeadline time.Time, protocolDeadline time.Time) (aduResponse []byte, reconnectAndReissue bool, err error) {
 	for {
 		var n int
 		if n, err = io.ReadFull(mb.conn, data[:tcpHeaderSize]); err != nil {
-			if n > 0 {
-				// A partial header was consumed, so the remaining bytes of that
-				// frame are still queued and the stream is misaligned.
+			if n > 0 && !mb.shouldRecover(err) {
+				// A partial header was consumed and the connection is still up, so
+				// the rest of that frame is queued and the stream is misaligned.
+				//
+				// Errors shouldRecover covers are excluded deliberately: there the
+				// socket is gone, so nothing is left queued to misalign us and the
+				// recovery path below can reconnect. That path decides for itself
+				// whether reissuing the request is safe.
 				err = desynced(err)
 				return
 			}
@@ -385,7 +372,7 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 				// before the connection dropped - leaving the retry to the caller,
 				// which re-encodes with a fresh transaction ID.
 				mb.logf("modbus: connection closed by remote side: %v", err)
-				res = readResultCloseRetry
+				reconnectAndReissue = true
 			}
 			return
 		}
@@ -415,12 +402,10 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 				continue
 			}
 
-			// A complete frame belonging to neither this request nor an earlier one
-			// we can account for. The bytes are still frame-aligned, but the
-			// request/response pairing is lost: our own request stays outstanding and
-			// its answer would corrupt the next exchange. This is also where a
-			// genuinely misaligned stream ends up, when the tail of an earlier frame
-			// happens to parse as a plausible header. See [ErrStreamDesynced].
+			// Frame-aligned, but our request stays outstanding and this frame
+			// belongs to nothing we can account for. A genuinely misaligned stream
+			// also lands here, when an earlier frame's tail parses as a plausible
+			// header. See [ErrStreamDesynced].
 			err = desynced(err)
 			return
 		}
@@ -588,14 +573,8 @@ func (mb *tcpTransporter) close() (err error) {
 	}
 	// Collapse the late-response window. Nothing can still be in flight on a
 	// connection that no longer exists, so no transaction ID may be treated as a
-	// late response until a new exchange succeeds on the next connection.
-	//
-	// Without this the window keeps spanning transactions that only ever existed
-	// on the previous socket, and it widens with every further attempt because
-	// lastAttemptedTransactionID advances while lastSuccessfulTransactionID stays
-	// frozen. A stray frame on a fresh connection would then be taken for a late
-	// response, silently drained, and the resulting clean timeout would keep a
-	// connection this function had just decided to discard.
+	// late response until a new exchange succeeds on the next connection. See
+	// TestTCPCloseResetsLateResponseWindow for what goes wrong without this.
 	mb.lastSuccessfulTransactionID = mb.lastAttemptedTransactionID
 	return
 }
