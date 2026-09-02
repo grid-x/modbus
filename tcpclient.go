@@ -445,14 +445,16 @@ func (mb *tcpTransporter) isLateResponse(got uint16) bool {
 
 func (mb *tcpTransporter) processResponse(data []byte) (aduResponse []byte, err error) {
 	// Read length, ignore transaction & protocol id (4 bytes)
+	// An implausible length means the bytes just read were not a frame header at
+	// all - most likely the tail of an earlier frame. There is nothing to salvage:
+	// the caller marks this as a desync and Send discards the connection, so the
+	// receive buffer goes with it and draining it here would be pointless.
 	length := int(binary.BigEndian.Uint16(data[4:]))
 	if length <= 0 {
-		mb.flush(data[:])
 		err = ErrTCPHeaderLength(length)
 		return
 	}
 	if length > (tcpMaxLength - (tcpHeaderSize - 1)) {
-		mb.flush(data[:])
 		err = ErrTCPHeaderLength(length)
 		return
 	}
@@ -570,22 +572,6 @@ func (mb *tcpTransporter) Close() error {
 	defer mb.mu.Unlock()
 
 	return mb.close()
-}
-
-// flush flushes pending data in the connection,
-// returns io.EOF if connection is closed.
-func (mb *tcpTransporter) flush(b []byte) (err error) {
-	if err = mb.conn.SetReadDeadline(time.Now()); err != nil {
-		return
-	}
-	// Timeout setting will be reset when reading
-	if _, err = mb.conn.Read(b); err != nil {
-		// Ignore timeout error
-		if netError, ok := err.(net.Error); ok && netError.Timeout() {
-			err = nil
-		}
-	}
-	return
 }
 
 func (mb *tcpTransporter) logf(format string, v ...interface{}) {
