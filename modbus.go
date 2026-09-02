@@ -57,9 +57,14 @@ const (
 // Reference) can write. Deciding that needs the byte after the function code,
 // which is past what this predicate looks at.
 //
-// Transport-agnostic on purpose - the function code sits at a different offset in
-// each framing (adu[1] for RTU and ASCII, adu[tcpHeaderSize] for TCP), so each
+// Kept free of framing detail on purpose: the function code sits at a different
+// offset per framing (adu[tcpHeaderSize] for TCP, adu[1] for RTU and ASCII), so a
 // transport extracts it and this decides the policy.
+//
+// Only the TCP transport consults it today. The RTU and ASCII transports still
+// reissue any request verbatim after reconnecting, so the same duplicate-write
+// hazard remains there - tracked separately, and this predicate is placed here so
+// that fix does not need its own copy of the policy.
 func funcCodeRepeatable(fc byte) bool {
 	switch fc {
 	case FuncCodeReadCoils,

@@ -68,16 +68,17 @@ func TestTCPTransporter(t *testing.T) {
 	}
 	defer ln.Close()
 
+	report, finish := joinServer(t)
 	go func() {
+		defer finish()
 		conn, err := ln.Accept()
 		if err != nil {
-			t.Error(err)
+			report(err)
 			return
 		}
 		defer conn.Close()
-		_, err = io.Copy(conn, conn)
-		if err != nil {
-			t.Error(err)
+		if _, err = io.Copy(conn, conn); err != nil {
+			report(err)
 			return
 		}
 	}()
@@ -124,6 +125,33 @@ type failReadConn struct {
 
 func (c *failReadConn) Read(_ []byte) (int, error)  { return 0, c.readErr }
 func (c *failReadConn) Write(b []byte) (int, error) { return len(b), nil }
+
+// joinServer wires up reporting and joining for a test server goroutine. The
+// goroutine calls report(err) instead of t.Error and defers finish() as its last
+// act; the test joins it and reports in t.Cleanup, so nothing can touch t after
+// the test function has returned - which would panic the whole run.
+func joinServer(t *testing.T) (report func(error), finish func()) {
+	t.Helper()
+
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	t.Cleanup(func() {
+		wg.Wait()
+		select {
+		case err := <-errCh:
+			t.Errorf("server: %v", err)
+		default:
+		}
+	})
+
+	return func(err error) {
+		select {
+		case errCh <- err: // keep the first, drop the rest
+		default:
+		}
+	}, wg.Done
+}
 
 // currentConn reads the transporter's connection under its mutex.
 func currentConn(tr *tcpTransporter) net.Conn {
@@ -210,11 +238,13 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 
 	done := make(chan struct{})
 	defer close(done)
+	report, finish := joinServer(t)
 	data := []byte{0xCA, 0xFE}
 	go func() {
+		defer finish()
 		conn, err := ln.Accept()
 		if err != nil {
-			t.Error(err)
+			report(err)
 			return
 		}
 		defer conn.Close()
@@ -227,31 +257,31 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 		}
 		data1, err := packager.Encode(pdu)
 		if err != nil {
-			t.Error(err)
+			report(err)
 			return
 		}
 		// encoding same PDU twice will increment the transaction id
 		data2, err := packager.Encode(pdu)
 		if err != nil {
-			t.Error(err)
+			report(err)
 			return
 		}
 		// encoding same PDU twice will increment the transaction id
 		data3, err := packager.Encode(pdu)
 		if err != nil {
-			t.Error(err)
+			report(err)
 			return
 		}
 		if _, err := conn.Write(data1); err != nil {
-			t.Error(err)
+			report(err)
 			return
 		}
 		if _, err := conn.Write(data2); err != nil {
-			t.Error(err)
+			report(err)
 			return
 		}
 		if _, err := conn.Write(data3); err != nil {
-			t.Error(err)
+			report(err)
 			return
 		}
 		// keep the connection open until the main routine is finished
@@ -329,22 +359,9 @@ func TestTCPMidFrameTimeoutClosesConnection(t *testing.T) {
 
 	done := make(chan struct{})
 	defer close(done)
-	// The server reports over a channel rather than calling t.Error itself:
-	// nothing joins this goroutine before the test returns, and a t.Error after
-	// that point panics the whole run.
-	srvErr := make(chan error, 1)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	t.Cleanup(func() {
-		wg.Wait()
-		select {
-		case err := <-srvErr:
-			t.Errorf("server: %v", err)
-		default:
-		}
-	})
+	report, finish := joinServer(t)
 	go func() {
-		defer wg.Done()
+		defer finish()
 		conn, err := ln.Accept()
 		if err != nil {
 			return
@@ -353,7 +370,7 @@ func TestTCPMidFrameTimeoutClosesConnection(t *testing.T) {
 		// Write a partial header - 3 of tcpHeaderSize bytes - and then stall, so
 		// that the client's ReadFull consumes those bytes and then times out.
 		if _, err := conn.Write([]byte{0x00, 0x01, 0x00}); err != nil {
-			srvErr <- err
+			report(err)
 			return
 		}
 		// keep the connection open until the main routine is finished
@@ -394,22 +411,10 @@ func TestTCPNoResendOnUnattributableResponse(t *testing.T) {
 	var (
 		mu       sync.Mutex
 		observed []uint16
-		wg       sync.WaitGroup
 	)
-	// See TestTCPMidFrameTimeoutClosesConnection: the server must not touch t
-	// from a goroutine the test does not join.
-	srvErr := make(chan error, 1)
-	wg.Add(1)
-	t.Cleanup(func() {
-		wg.Wait()
-		select {
-		case err := <-srvErr:
-			t.Errorf("server: %v", err)
-		default:
-		}
-	})
+	report, finish := joinServer(t)
 	go func() {
-		defer wg.Done()
+		defer finish()
 		conn, err := ln.Accept()
 		if err != nil {
 			return
@@ -432,7 +437,7 @@ func TestTCPNoResendOnUnattributableResponse(t *testing.T) {
 				Data:         []byte{0x02, 0xCA, 0xFE},
 			})
 			if err != nil {
-				srvErr <- err
+				report(err)
 				return
 			}
 			if isFirst {
