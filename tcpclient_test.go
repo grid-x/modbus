@@ -293,6 +293,33 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 	}
 }
 
+// TestTCPCloseResetsLateResponseWindow verifies that closing the connection
+// collapses the late-response window. A transaction ID that was in flight on the
+// old socket must not be accepted as a late response afterwards: draining it
+// would leave the read to time out cleanly, which keeps the very connection the
+// close was meant to discard.
+func TestTCPCloseResetsLateResponseWindow(t *testing.T) {
+	handler := NewTCPClientHandler("irrelevant")
+	tr := &handler.tcpTransporter
+
+	tr.lastSuccessfulTransactionID = 10
+	tr.lastAttemptedTransactionID = 20
+	if !tr.isLateResponse(15) {
+		t.Fatal("precondition: 15 should be inside the window before the close")
+	}
+
+	tr.mu.Lock()
+	err := tr.close()
+	tr.mu.Unlock()
+	if err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	if tr.isLateResponse(15) {
+		t.Error("no transaction ID may be treated as late after a close: nothing can still be in flight on a connection that is gone")
+	}
+}
+
 // TestTCPMidFrameTimeoutClosesConnection verifies that a read timeout which hit
 // after part of a response header had already been consumed closes the
 // connection. Keeping such a connection leaves the remainder of that frame

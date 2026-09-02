@@ -568,6 +568,17 @@ func (mb *tcpTransporter) close() (err error) {
 		err = mb.conn.Close()
 		mb.conn = nil
 	}
+	// Collapse the late-response window. Nothing can still be in flight on a
+	// connection that no longer exists, so no transaction ID may be treated as a
+	// late response until a new exchange succeeds on the next connection.
+	//
+	// Without this the window keeps spanning transactions that only ever existed
+	// on the previous socket, and it widens with every further attempt because
+	// lastAttemptedTransactionID advances while lastSuccessfulTransactionID stays
+	// frozen. A stray frame on a fresh connection would then be taken for a late
+	// response, silently drained, and the resulting clean timeout would keep a
+	// connection this function had just decided to discard.
+	mb.lastSuccessfulTransactionID = mb.lastAttemptedTransactionID
 	return
 }
 
