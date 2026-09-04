@@ -40,6 +40,44 @@ const (
 	FuncCodeReadDeviceIdentification = 43
 )
 
+// funcCodeRepeatable reports whether a request carrying this function code may be
+// written to the wire more than once. Link recovery reissues a request verbatim
+// after reconnecting, which is harmless for a read but means a device that
+// processed a write before the connection dropped executes it again - once per
+// recovery attempt.
+//
+// Only purely reading function codes are repeatable. Everything else counts as a
+// write, including FuncCodeReadWriteMultipleRegisters (which also writes) and any
+// vendor-specific code we cannot reason about: misjudging a read costs one failed
+// request, misjudging a write duplicates a command on live equipment.
+//
+// FuncCodeReadDeviceIdentification is excluded for the same reason. It is
+// Encapsulated Interface Transport, and only MEI type
+// meiTypeReadDeviceIdentification is a read - MEI type 13 (CANopen General
+// Reference) can write. Deciding that needs the byte after the function code,
+// which is past what this predicate looks at.
+//
+// Kept free of framing detail on purpose: the function code sits at a different
+// offset per framing (adu[tcpHeaderSize] for TCP, adu[1] for RTU and ASCII), so a
+// transport extracts it and this decides the policy.
+//
+// Only the TCP transport consults it today. The RTU and ASCII transports still
+// reissue any request verbatim after reconnecting, so the same duplicate-write
+// hazard remains there - tracked separately, and this predicate is placed here so
+// that fix does not need its own copy of the policy.
+func funcCodeRepeatable(fc byte) bool {
+	switch fc {
+	case FuncCodeReadCoils,
+		FuncCodeReadDiscreteInputs,
+		FuncCodeReadHoldingRegisters,
+		FuncCodeReadInputRegisters,
+		FuncCodeReadFIFOQueue:
+		return true
+	default:
+		return false
+	}
+}
+
 // meiType specifies a MEI Type as defined in https://www.modbus.org/docs/Modbus_Application_Protocol_V1_1b.pdf#page=44
 type meiType byte
 
