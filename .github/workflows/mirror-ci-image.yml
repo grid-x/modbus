@@ -2,7 +2,11 @@ name: Mirror CI image
 
 # Anonymous pulls from public ECR hit a rate limit on GitHub runners.
 # This copies the gridx dev image to GHCR, where CI pulls it from.
+# Runs on every change to this file and on manual dispatch.
 on:
+  push:
+    paths:
+      - .github/workflows/mirror-ci-image.yml
   workflow_dispatch:
     inputs:
       source_tag:
@@ -18,8 +22,8 @@ jobs:
     permissions:
       packages: write
     env:
-      SOURCE: public.ecr.aws/gridx/base-images:${{ inputs.source_tag }}
-      TARGET: ghcr.io/grid-x/modbus-dev:${{ inputs.target_tag }}
+      SOURCE: public.ecr.aws/gridx/base-images:${{ inputs.source_tag || 'modbus-dev-1.21.latest' }}
+      TARGET: ghcr.io/grid-x/modbus-dev:${{ inputs.target_tag || 'go1.21' }}
     steps:
       - uses: docker/login-action@v3
         with:
