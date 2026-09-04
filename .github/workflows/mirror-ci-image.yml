@@ -1,0 +1,42 @@
+name: Mirror CI image
+
+# Anonymous pulls from public ECR hit a rate limit on GitHub runners.
+# This copies the gridx dev image to GHCR, where CI pulls it from.
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: Tag of public.ecr.aws/gridx/base-images to mirror
+        default: modbus-dev-1.21.latest
+      target_tag:
+        description: Tag to publish under ghcr.io/grid-x/modbus-dev
+        default: go1.21
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    env:
+      SOURCE: public.ecr.aws/gridx/base-images:${{ inputs.source_tag }}
+      TARGET: ghcr.io/grid-x/modbus-dev:${{ inputs.target_tag }}
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull source image
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            docker pull "$SOURCE" && exit 0
+            echo "pull failed, retry $attempt in 30s"
+            sleep 30
+          done
+          exit 1
+
+      - name: Push to GHCR
+        run: |
+          docker tag "$SOURCE" "$TARGET"
+          docker push "$TARGET"
