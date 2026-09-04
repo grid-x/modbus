@@ -4,8 +4,6 @@ GO_TOOLS := public.ecr.aws/gridx/base-images:modbus-dev-1.21.latest
 DOCKER_RUN := docker run --init --rm -v $$PWD:/go/src/github.com/grid-x/modbus -w /go/src/github.com/grid-x/modbus
 GO_RUN := ${DOCKER_RUN} ${GO_TOOLS} bash -c
 
-BRANCH := $(shell echo ${BUILDKITE_BRANCH} | sed 's/\//_/g')
-
 all: bin/
 
 .PHONY: test
