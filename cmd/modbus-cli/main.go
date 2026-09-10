@@ -52,7 +52,7 @@ func main() {
 	var (
 		register           = flag.Int("register", -1, "")
 		fnCode             = flag.Int("fn-code", 0x03, "fn")
-		quantity           = flag.Int("quantity", 2, "register quantity, length in bytes")
+		quantity           = flag.Int("quantity", 2, "number of 16-bit registers to read/write (not bytes)")
 		ignoreCRCError     = flag.Bool("ignore-crc", false, "ignore crc")
 		eType              = flag.String("type-exec", "uint16", "")
 		pType              = flag.String("type-parse", "raw", "type to parse the register result. Use 'raw' if you want to see the raw bits and bytes. Use 'all' if you want to decode the result to different commonly used formats.")
