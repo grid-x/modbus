@@ -8,12 +8,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log/slog"
+	"log"
 	"math"
 	"net/url"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -74,18 +73,17 @@ func main() {
 		return
 	}
 
-	logger := slog.Default()
+	logger := log.New(os.Stdout, "", 0)
 	if *fnCode != modbus.FuncCodeReadDeviceIdentification {
 		if *register > math.MaxUint16 || *register < 0 {
-			intRegister := *register
-			logger.Error("invalid register value: " + strconv.Itoa(intRegister))
+			log.Printf("invalid register value: %d", *register)
 			os.Exit(-1)
 		}
 	}
 
 	if *fnCode == modbus.FuncCodeReadDeviceIdentification && modbus.ReadDeviceIDCode(*readDeviceIDCode) == modbus.ReadDeviceIDCodeSpecific {
 		if *readDeviceIDObject > math.MaxUint8 || *readDeviceIDObject < 0 {
-			logger.Error("invalid object ID: " + strconv.Itoa(*readDeviceIDObject))
+			log.Printf("invalid object ID: %d", *readDeviceIDObject)
 			os.Exit(-1)
 		}
 	}
@@ -93,7 +91,7 @@ func main() {
 	startReg := uint16(*register)
 
 	if *logframe {
-		opt.logger = &debugAdapter{logger}
+		opt.logger = logger
 	}
 
 	var (
@@ -110,14 +108,14 @@ func main() {
 
 	handler, err := newHandler(opt)
 	if err != nil {
-		logger.Error(err.Error())
+		log.Print(err)
 		os.Exit(-1)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	if err := handler.Connect(ctx); err != nil {
-		logger.Error(err.Error())
+		log.Print(err)
 		os.Exit(-1)
 	}
 	defer handler.Close()
@@ -126,9 +124,9 @@ func main() {
 
 	result, err := exec(ctx, client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity, *readDeviceIDCode, *readDeviceIDObject)
 	if err != nil && strings.Contains(err.Error(), "crc") && *ignoreCRCError {
-		logger.Info("ignoring crc error: %+v\n", "error", err)
+		logger.Printf("ignoring crc error: %+v", err)
 	} else if err != nil {
-		logger.Error(err.Error())
+		log.Print(err)
 		os.Exit(-1)
 	}
 
@@ -148,19 +146,18 @@ func main() {
 	}
 
 	if err != nil {
-		logger.Error(err.Error())
+		log.Print(err)
 		os.Exit(-1)
 	}
 
-	logger.Info(res)
+	logger.Println(res)
 
 	if *filename != "" {
 		if err := resultToFile([]byte(res), *filename); err != nil {
-			logger.Error(err.Error())
+			log.Print(err)
 			os.Exit(-1)
 		}
-		fName := *filename
-		logger.Info(fName + " successfully written\n")
+		logger.Printf("%s successfully written", *filename)
 	}
 }
 
