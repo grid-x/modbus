@@ -137,6 +137,24 @@ Reading multiple registers is only possible in the raw format
 ./modbus-cli -address=tcp://127.0.0.1:502 -quantity=16 -type-parse=raw -register=42
 ```
 
+### Reading Coils and Discrete Inputs
+
+Function codes 0x01 (read coils) and 0x02 (read discrete inputs) return one bit per
+address instead of 16-bit registers. For these function codes `-quantity` is the number
+of coils/inputs and the result is printed as one address per line, so `-type-parse`
+defaults to `bits`.
+
+Read 3 discrete inputs starting at address 42
+```sh
+./modbus-cli -address=tcp://127.0.0.1:502 -fn-code=0x02 -register=42 -quantity=3
+```
+
+```
+42  1
+43  0
+44  1
+```
+
 ### Writing Registers
 
 Write 1 register 
