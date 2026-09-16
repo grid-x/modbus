@@ -52,10 +52,10 @@ func main() {
 	var (
 		register           = flag.Int("register", -1, "")
 		fnCode             = flag.Int("fn-code", 0x03, "fn")
-		quantity           = flag.Int("quantity", 2, "number of 16-bit registers to read/write (not bytes)")
+		quantity           = flag.Int("quantity", 2, "for register fn-codes: number of 16-bit registers to read/write (not bytes). For coil/input fn-codes: number of coils/inputs to read/write (one bit)")
 		ignoreCRCError     = flag.Bool("ignore-crc", false, "ignore crc")
 		eType              = flag.String("type-exec", "uint16", "")
-		pType              = flag.String("type-parse", "raw", "type to parse the register result. Use 'raw' if you want to see the raw bits and bytes. Use 'all' if you want to decode the result to different commonly used formats.")
+		pType              = flag.String("type-parse", defaultParseType, "type to parse the register result. Use 'raw' if you want to see the raw bits and bytes. Use 'all' if you want to decode the result to different commonly used formats. Use 'bits' to decode a bit-wise result (default for fn-code 0x01 and 0x02).")
 		writeValue         = flag.Float64("write-value", math.MaxFloat64, "")
 		readParseOrder     = flag.String("read-parse-order", "", "order to parse the register that was read out. Valid values: [AB, BA, ABCD, DCBA, BADC, CDAB]. Can only be used for 16bit (1 register) and 32bit (2 registers). If used, it will overwrite the big-endian or little-endian parameter.")
 		writeParseOrder    = flag.String("write-exec-order", "", "order to execute the register(s) that should be written to. Valid values: [AB, BA, ABCD, DCBA, BADC, CDAB]. Can only be used for 16bit (1 register) and 32bit (2 registers). If used, it will overwrite the big-endian or little-endian parameter.")
@@ -137,7 +137,17 @@ func main() {
 	case modbus.FuncCodeReadDeviceIdentification:
 		res = string(result)
 	default:
-		switch *pType {
+		// FC1 (read coils) and FC2 (read discrete inputs) return bit-packed bytes
+		// instead of 16-bit registers, so the register-oriented parsers do not
+		// apply. Fall back to the bit parser unless the user asked for something
+		// else explicitly.
+		pt := *pType
+		if isBitFuncCode(*fnCode) && pt == defaultParseType {
+			pt = "bits"
+		}
+		switch pt {
+		case "bits":
+			res, err = resultToBitsString(result, int(startReg), *quantity)
 		case "raw":
 			res, err = resultToRawString(result, int(startReg))
 		case "all":
@@ -182,6 +192,8 @@ func exec(
 	switch fnCode {
 	case 0x01:
 		result, err = client.ReadCoils(ctx, uint16(register), uint16(quantity))
+	case 0x02:
+		result, err = client.ReadDiscreteInputs(ctx, uint16(register), uint16(quantity))
 	case 0x05:
 		const (
 			coilOn  uint16 = 0xFF00
@@ -309,6 +321,42 @@ func resultToRawString(r []byte, startReg int) (string, error) {
 		res += fmt.Sprintf("%d\t0x%X 0x%X\t %b %b\n", reg, r[i*2], r[i*2+1], r[i*2], r[i*2+1])
 	}
 	return res, nil
+}
+
+// defaultParseType is the value of -type-parse when the user did not set the
+// flag. It is used to detect whether a bit-wise function code may pick its own
+// default parser.
+const defaultParseType = "raw"
+
+// isBitFuncCode reports whether the function code returns bit-packed data
+// (one bit per coil/input) rather than 16-bit registers.
+func isBitFuncCode(fnCode int) bool {
+	return fnCode == modbus.FuncCodeReadCoils || fnCode == modbus.FuncCodeReadDiscreteInputs
+}
+
+// resultToBitsString decodes a bit-packed response as returned by FC1 and FC2.
+// The first byte holds the first 8 addresses with the lowest address in the
+// least significant bit. quantity limits the output to the number of
+// coils/inputs that were actually requested, since the response is padded to
+// full bytes.
+func resultToBitsString(r []byte, startReg int, quantity int) (string, error) {
+	if quantity < 1 {
+		return "", fmt.Errorf("invalid quantity %d", quantity)
+	}
+	if available := len(r) * 8; quantity > available {
+		return "", fmt.Errorf("response holds %d bits, but %d were requested", available, quantity)
+	}
+
+	buf := new(bytes.Buffer)
+	w := tabwriter.NewWriter(buf, 0, 0, 2, ' ', 0)
+	for i := 0; i < quantity; i++ {
+		bit := (r[i/8] >> (i % 8)) & 0x01
+		fmt.Fprintf(w, "%d\t%d\n", startReg+i, bit)
+	}
+	if err := w.Flush(); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
 
 func resultToAllString(result []byte) (string, error) {

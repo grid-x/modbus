@@ -369,3 +369,77 @@ func TestForcedOrder(t *testing.T) {
 		})
 	}
 }
+
+func TestResultToBitsString(t *testing.T) {
+	tests := []struct {
+		name        string
+		result      []byte
+		startReg    int
+		quantity    int
+		expected    string
+		expectError bool
+	}{
+		{
+			// LSB of the first byte is the lowest address.
+			name:     "single byte, all bits requested",
+			result:   []byte{0b00000101},
+			startReg: 0,
+			quantity: 8,
+			expected: "0  1\n1  0\n2  1\n3  0\n4  0\n5  0\n6  0\n7  0\n",
+		},
+		{
+			name:     "padded response is truncated to quantity",
+			result:   []byte{0b00000011},
+			startReg: 10,
+			quantity: 3,
+			expected: "10  1\n11  1\n12  0\n",
+		},
+		{
+			name:     "second byte continues the address range",
+			result:   []byte{0x00, 0b00000010},
+			startReg: 100,
+			quantity: 10,
+			expected: "100  0\n101  0\n102  0\n103  0\n104  0\n105  0\n106  0\n107  0\n108  0\n109  1\n",
+		},
+		{
+			name:        "quantity exceeds response",
+			result:      []byte{0xFF},
+			startReg:    0,
+			quantity:    9,
+			expectError: true,
+		},
+		{
+			name:        "invalid quantity",
+			result:      []byte{0xFF},
+			startReg:    0,
+			quantity:    0,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resultToBitsString(tt.result, tt.startReg, tt.quantity)
+			if tt.expectError {
+				if err == nil {
+					t.Fatalf("expected an error, got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if diff := cmp.Diff(tt.expected, got); diff != "" {
+				t.Errorf("unexpected result (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestIsBitFuncCode(t *testing.T) {
+	for fnCode, want := range map[int]bool{0x01: true, 0x02: true, 0x03: false, 0x04: false, 0x10: false} {
+		if got := isBitFuncCode(fnCode); got != want {
+			t.Errorf("isBitFuncCode(0x%02X) = %v, want %v", fnCode, got, want)
+		}
+	}
+}
