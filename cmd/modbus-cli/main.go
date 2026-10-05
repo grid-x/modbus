@@ -62,7 +62,7 @@ func main() {
 		parseBigEndian     = flag.Bool("order-parse-bigendian", true, "t: big, f: little")
 		execBigEndian      = flag.Bool("order-exec-bigendian", true, "t: big, f: little")
 		filename           = flag.String("filename", "", "")
-		logframe           = flag.Bool("log-frame", false, "prints received and send modbus frame to stderr")
+		logframe           = flag.Bool("log-frame", false, "prints received and send modbus frame to stdout")
 		readDeviceIDCode   = flag.Int("device-id-code", 0x01, "Read Device ID Code (01 for basic, 02 for regular, 03 for extended, 04 for specific)")
 		readDeviceIDObject = flag.Int("device-id-object", -1, "Read Device ID Object ID Code (0x00 - 0xFF)")
 	)
@@ -93,8 +93,7 @@ func main() {
 	startReg := uint16(*register)
 
 	if *logframe {
-		slog.SetLogLoggerLevel(slog.LevelDebug)
-		opt.logger = &debugAdapter{logger}
+		opt.logger = &debugAdapter{slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))}
 	}
 
 	var (
