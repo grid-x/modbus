@@ -93,7 +93,7 @@ func main() {
 	startReg := uint16(*register)
 
 	if *logframe {
-		opt.logger = &debugAdapter{logger}
+		opt.logger = &debugAdapter{slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))}
 	}
 
 	var (
@@ -126,7 +126,7 @@ func main() {
 
 	result, err := exec(ctx, client, eo, *writeParseOrder, *register, *fnCode, *writeValue, *eType, *quantity, *readDeviceIDCode, *readDeviceIDObject)
 	if err != nil && strings.Contains(err.Error(), "crc") && *ignoreCRCError {
-		logger.Info("ignoring crc error: %+v\n", "error", err)
+		logger.Info("ignoring crc error", "error", err)
 	} else if err != nil {
 		logger.Error(err.Error())
 		os.Exit(-1)

@@ -1,11 +1,14 @@
 package main
 
-import "log/slog"
+import (
+	"fmt"
+	"log/slog"
+)
 
 type debugAdapter struct {
 	*slog.Logger
 }
 
-func (log *debugAdapter) Printf(msg string, args ...any) {
-	log.Logger.Debug(msg, args...)
+func (log *debugAdapter) Printf(format string, args ...any) {
+	log.Debug(fmt.Sprintf(format, args...))
 }
