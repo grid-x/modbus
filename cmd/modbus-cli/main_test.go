@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
+	"log/slog"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -433,6 +436,21 @@ func TestResultToBitsString(t *testing.T) {
 				t.Errorf("unexpected result (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestDebugAdapterPrintf(t *testing.T) {
+	var buf bytes.Buffer
+	l := &debugAdapter{slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+
+	l.Printf("modbus: send % x", []byte{0x01, 0x02})
+
+	out := buf.String()
+	if !strings.Contains(out, "modbus: send 01 02") {
+		t.Errorf("frame missing from output: %q", out)
+	}
+	if strings.Contains(out, "!BADKEY") {
+		t.Errorf("unexpected !BADKEY in output: %q", out)
 	}
 }
 
