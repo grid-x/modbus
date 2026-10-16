@@ -318,12 +318,12 @@ func TestTCPTransactionMismatchRetry(t *testing.T) {
 	}
 }
 
-// TestTCPCloseResetsLateResponseWindow verifies that closing the connection
-// collapses the late-response window. A transaction ID that was in flight on the
-// old socket must not be accepted as a late response afterwards: draining it
-// would leave the read to time out cleanly, which keeps the very connection the
-// close was meant to discard.
-func TestTCPCloseResetsLateResponseWindow(t *testing.T) {
+// TestTCPCloseKeepsLateResponseWindow verifies that closing the connection
+// leaves the late-response window intact. The requests it spans were really
+// sent, and a device that queues responses independently of the TCP connection
+// delivers them on the next one (INTE-6365). Only a successful exchange narrows
+// the window.
+func TestTCPCloseKeepsLateResponseWindow(t *testing.T) {
 	handler := NewTCPClientHandler("irrelevant")
 	tr := &handler.tcpTransporter
 
@@ -340,8 +340,259 @@ func TestTCPCloseResetsLateResponseWindow(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	if tr.isLateResponse(15) {
-		t.Error("no transaction ID may be treated as late after a close: nothing can still be in flight on a connection that is gone")
+	if !tr.isLateResponse(15) {
+		t.Error("15 was sent and never answered, so it must still be treated as late after a close")
+	}
+}
+
+// staleReplyServer accepts connections on ln one after another and hands each to
+// serve along with its zero-based index. It registers its own cleanup, which
+// closes the listener before the goroutine is joined.
+func staleReplyServer(t *testing.T, ln net.Listener, serve func(i int, conn net.Conn, report func(error))) {
+	t.Helper()
+
+	report, finish := joinServer(t)
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		defer finish()
+		for i := 0; ; i++ {
+			conn, err := ln.Accept()
+			if err != nil {
+				return // listener closed
+			}
+			serve(i, conn, report)
+			conn.Close()
+		}
+	}()
+}
+
+// readHoldingRequestLen is the ADU size of a ReadHoldingRegisters request:
+// header, function code, address and quantity.
+const readHoldingRequestLen = tcpHeaderSize + 1 + 2 + 2
+
+// readHoldingReply is a well-formed ReadHoldingRegisters response for one
+// register carrying value, under the given transaction ID.
+func readHoldingReply(transactionID uint16, value []byte) []byte {
+	adu := []byte{0, 0, 0, 0, 0, 5, 0, FuncCodeReadHoldingRegisters, 2, value[0], value[1]}
+	binary.BigEndian.PutUint16(adu, transactionID)
+	return adu
+}
+
+// readRequest reads one ReadHoldingRegisters request and returns its
+// transaction ID. ok is false once the client has gone away.
+func readRequest(conn net.Conn) (transactionID uint16, ok bool) {
+	req := make([]byte, readHoldingRequestLen)
+	if _, err := io.ReadFull(conn, req); err != nil {
+		return 0, false
+	}
+	return binary.BigEndian.Uint16(req), true
+}
+
+// staleReplyHandler mirrors how the integrations repo configures the transport:
+// a protocol recovery window as long as the request timeout.
+func staleReplyHandler(address string) *TCPClientHandler {
+	handler := NewTCPClientHandler(address)
+	handler.Timeout = 500 * time.Millisecond
+	handler.ProtocolRecoveryTimeout = handler.Timeout
+	return handler
+}
+
+// TestTCPStaleReplyOnNewConnectionIsDiscarded reproduces INTE-6365: the device
+// drops the connection without answering, then delivers that unanswered response
+// on the next connection, ahead of the response to the request actually sent
+// there. The stale frame must be discarded, not treated as a desync.
+func TestTCPStaleReplyOnNewConnectionIsDiscarded(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []byte{0xCA, 0xFE}
+	var orphaned uint16
+	staleReplyServer(t, ln, func(i int, conn net.Conn, report func(error)) {
+		id, ok := readRequest(conn)
+		if !ok {
+			report(fmt.Errorf("connection %d: no request", i))
+			return
+		}
+		switch i {
+		case 0:
+			orphaned = id // closed without an answer
+		case 1:
+			if _, err := conn.Write(append(readHoldingReply(orphaned, []byte{0xDE, 0xAD}), readHoldingReply(id, want)...)); err != nil {
+				report(err)
+			}
+			// Wait for the client to close, so the reply is not cut off.
+			_, _ = conn.Read(make([]byte, 1))
+		}
+	})
+
+	handler := staleReplyHandler(ln.Addr().String())
+	defer handler.Close()
+	client := NewClient(handler)
+	ctx := context.Background()
+
+	if _, err := client.ReadHoldingRegisters(ctx, 0, 1); err == nil {
+		t.Fatal("first read: expected an error, the server closed without answering")
+	}
+
+	got, err := client.ReadHoldingRegisters(ctx, 0, 1)
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("second read: got % x, want % x", got, want)
+	}
+}
+
+// TestTCPStaleReplyChainAcrossConnections reproduces the chain seen in
+// INTE-6365, where several connections in a row each receive only the previous
+// connection's last response and then close. The window has to keep spanning
+// every unanswered request until one finally succeeds.
+func TestTCPStaleReplyChainAcrossConnections(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const chain = 3
+	want := []byte{0xCA, 0xFE}
+	var previous uint16
+	staleReplyServer(t, ln, func(i int, conn net.Conn, report func(error)) {
+		id, ok := readRequest(conn)
+		if !ok {
+			report(fmt.Errorf("connection %d: no request", i))
+			return
+		}
+		defer func() { previous = id }()
+		if i == 0 {
+			return // closed without an answer
+		}
+		resp := readHoldingReply(previous, []byte{0xDE, 0xAD})
+		if i == chain {
+			resp = append(resp, readHoldingReply(id, want)...)
+		}
+		if _, err := conn.Write(resp); err != nil {
+			report(err)
+		}
+		if i == chain {
+			_, _ = conn.Read(make([]byte, 1))
+		}
+	})
+
+	handler := staleReplyHandler(ln.Addr().String())
+	defer handler.Close()
+	client := NewClient(handler)
+	ctx := context.Background()
+
+	for i := 0; i < chain; i++ {
+		_, err := client.ReadHoldingRegisters(ctx, 0, 1)
+		if err == nil {
+			t.Fatalf("read %d: expected an error, the server answered only with a stale response", i)
+		}
+		if errors.Is(err, ErrStreamDesynced) {
+			t.Fatalf("read %d: a stale response must be discarded, not reported as a desync: %v", i, err)
+		}
+	}
+
+	got, err := client.ReadHoldingRegisters(ctx, 0, 1)
+	if err != nil {
+		t.Fatalf("final read: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("final read: got % x, want % x", got, want)
+	}
+}
+
+// TestTCPStaleReplyWithoutAnswerTimesOut verifies that when only the stale
+// response arrives on the new connection, the request ends in a clean timeout
+// rather than a desync: the stale frame was consumed whole, so the stream is
+// still aligned and the connection can be kept.
+func TestTCPStaleReplyWithoutAnswerTimesOut(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var orphaned uint16
+	staleReplyServer(t, ln, func(i int, conn net.Conn, report func(error)) {
+		id, ok := readRequest(conn)
+		if !ok {
+			report(fmt.Errorf("connection %d: no request", i))
+			return
+		}
+		switch i {
+		case 0:
+			orphaned = id
+		case 1:
+			if _, err := conn.Write(readHoldingReply(orphaned, []byte{0xDE, 0xAD})); err != nil {
+				report(err)
+			}
+			_, _ = conn.Read(make([]byte, 1)) // stall until the client closes
+		}
+	})
+
+	handler := staleReplyHandler(ln.Addr().String())
+	client := NewClient(handler)
+	ctx := context.Background()
+
+	if _, err := client.ReadHoldingRegisters(ctx, 0, 1); err == nil {
+		t.Fatal("first read: expected an error, the server closed without answering")
+	}
+
+	_, err = client.ReadHoldingRegisters(ctx, 0, 1)
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() || errors.Is(err, ErrStreamDesynced) {
+		t.Fatalf("second read: expected a clean timeout, got %v", err)
+	}
+	if conn := currentConn(&handler.tcpTransporter); conn == nil {
+		t.Error("connection must be kept after a clean timeout")
+	}
+	handler.Close()
+}
+
+// TestTCPLateReplyWithWrongProtocolIDIsDesync verifies that a frame is only
+// discarded as a late response when its protocol ID is the Modbus one. verify
+// stops at the transaction ID mismatch, so without this check misaligned bytes
+// whose first two happen to fall inside the window would be silently drained.
+func TestTCPLateReplyWithWrongProtocolIDIsDesync(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var orphaned uint16
+	staleReplyServer(t, ln, func(i int, conn net.Conn, report func(error)) {
+		id, ok := readRequest(conn)
+		if !ok {
+			report(fmt.Errorf("connection %d: no request", i))
+			return
+		}
+		switch i {
+		case 0:
+			orphaned = id
+		case 1:
+			resp := readHoldingReply(orphaned, []byte{0xDE, 0xAD})
+			binary.BigEndian.PutUint16(resp[2:], 0x1234)
+			if _, err := conn.Write(resp); err != nil {
+				report(err)
+			}
+			_, _ = conn.Read(make([]byte, 1))
+		}
+	})
+
+	handler := staleReplyHandler(ln.Addr().String())
+	defer handler.Close()
+	client := NewClient(handler)
+	ctx := context.Background()
+
+	if _, err := client.ReadHoldingRegisters(ctx, 0, 1); err == nil {
+		t.Fatal("first read: expected an error, the server closed without answering")
+	}
+
+	_, err = client.ReadHoldingRegisters(ctx, 0, 1)
+	if !errors.Is(err, ErrStreamDesynced) {
+		t.Fatalf("second read: expected error wrapping %v, got %v", ErrStreamDesynced, err)
 	}
 }
 

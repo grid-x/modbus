@@ -252,11 +252,10 @@ func (mb *tcpTransporter) Send(ctx context.Context, aduRequest []byte) (aduRespo
 			}
 		}
 
-		// Recorded before the write, not after: close() collapses the late-response
-		// window onto this value, and on a write error it must name the request we
-		// are attempting rather than the previous one - otherwise the window still
-		// spans this transaction and a frame carrying its ID would be drained as a
-		// late response on the next connection.
+		// Recorded before the write, not after: a write that fails may still have
+		// reached the device in part or in full, so its response can turn up later -
+		// possibly on the next connection - and must then fall inside the
+		// late-response window, see [tcpTransporter.isLateResponse].
 		mb.lastAttemptedTransactionID = binary.BigEndian.Uint16(aduRequest)
 
 		// Send data
@@ -402,13 +401,20 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 
 			var mismatch errTransactionIDMismatch
 			if errors.As(err, &mismatch) && mb.ProtocolRecoveryTimeout > 0 &&
-				time.Until(protocolDeadline) >= 0 && mb.isLateResponse(mismatch.got) {
-				// This is the (late) response to an earlier query that already timed
-				// out. The frame boundary is intact, so discard it and keep reading:
-				// the response we are waiting for should follow *without* sending
-				// another query. (If we sent another query with transaction ID X+1
-				// here, we would again get a mismatch for the response to X already
-				// sitting in the buffer.)
+				time.Until(protocolDeadline) >= 0 && mb.isLateResponse(mismatch.got) &&
+				binary.BigEndian.Uint16(aduResponse[2:]) == tcpProtocolIdentifier {
+				// This is the (late) response to an earlier query that we already gave
+				// up on, possibly sent on a connection that has since been closed:
+				// some devices queue responses independently of the TCP connection
+				// and deliver them on the next one. The frame boundary is intact, so
+				// discard it and keep reading: the response we are waiting for should
+				// follow *without* sending another query. (If we sent another query
+				// with transaction ID X+1 here, we would again get a mismatch for the
+				// response to X already sitting in the buffer.)
+				//
+				// The protocol ID is checked too because verify stops at the first
+				// mismatch. Without it, misaligned bytes whose first two happen to
+				// fall inside the window would be drained instead of reported.
 				continue
 			}
 
@@ -429,6 +435,10 @@ func (mb *tcpTransporter) readResponse(aduRequest []byte, data []byte, recoveryD
 // request that we already gave up on, i.e. whether it lies strictly between the
 // last successfully verified and the currently attempted transaction ID, taking
 // uint16 wraparound into account.
+//
+// The window deliberately survives close(): the requests it spans were really
+// sent, and a device that queues responses independently of the TCP connection
+// delivers them on the next one. It only narrows on the next successful exchange.
 func (mb *tcpTransporter) isLateResponse(got uint16) bool {
 	if mb.lastAttemptedTransactionID < mb.lastSuccessfulTransactionID {
 		// The counter wrapped between the two, so the open interval is the union
@@ -581,11 +591,8 @@ func (mb *tcpTransporter) close() (err error) {
 		err = mb.conn.Close()
 		mb.conn = nil
 	}
-	// Collapse the late-response window. Nothing can still be in flight on a
-	// connection that no longer exists, so no transaction ID may be treated as a
-	// late response until a new exchange succeeds on the next connection. See
-	// TestTCPCloseResetsLateResponseWindow for what goes wrong without this.
-	mb.lastSuccessfulTransactionID = mb.lastAttemptedTransactionID
+	// The late-response window is kept on purpose, see
+	// [tcpTransporter.isLateResponse].
 	return
 }
 
