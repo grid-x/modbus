@@ -1,0 +1,10 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: modbus
+  annotations:
+    github.com/project-slug: grid-x/modbus
+spec:
+  type: library
+  lifecycle: production
+  owner: integration-team
