@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 )
 
 // ErrADURequestLength informs about a wrong ADU request length.
@@ -32,6 +33,8 @@ type RTUOverUDPClientHandler struct {
 func NewRTUOverUDPClientHandler(address string) *RTUOverUDPClientHandler {
 	handler := &RTUOverUDPClientHandler{}
 	handler.Address = address
+	handler.Timeout = tcpTimeout
+	handler.IdleTimeout = tcpIdleTimeout
 	return handler
 }
 
@@ -45,12 +48,18 @@ func RTUOverUDPClient(address string) Client {
 type rtuUDPTransporter struct {
 	// Connect string
 	Address string
+	// Write & read timeout of a request
+	Timeout time.Duration
+	// Idle timeout to close the connection
+	IdleTimeout time.Duration
 	// Transmission logger
 	Logger Logger
 
 	// UDP connection
-	mu   sync.Mutex
-	conn net.Conn
+	mu           sync.Mutex
+	conn         net.Conn
+	lastActivity time.Time
+	closeTimer   *time.Timer
 }
 
 // Send sends data to server and ensures adequate response for request type
@@ -67,6 +76,18 @@ func (mb *rtuUDPTransporter) Send(ctx context.Context, aduRequest []byte) (aduRe
 	// Establish a new connection if not connected
 	if err = mb.connect(ctx); err != nil {
 		return
+	}
+
+	// Set timer to close when idle
+	mb.lastActivity = time.Now()
+	mb.startCloseTimer()
+
+	// Set write and read timeout, without it a device that does not answer
+	// blocks the read forever as UDP has no connection that could break.
+	if mb.Timeout > 0 {
+		if err = mb.conn.SetDeadline(mb.lastActivity.Add(mb.Timeout)); err != nil {
+			return
+		}
 	}
 
 	// Send the request
@@ -141,7 +162,7 @@ func (mb *rtuUDPTransporter) connect(ctx context.Context) error {
 	default:
 	}
 	if mb.conn == nil {
-		dialer := net.Dialer{}
+		dialer := net.Dialer{Timeout: mb.Timeout}
 		conn, err := dialer.DialContext(ctx, "udp", mb.Address)
 		if err != nil {
 			return err
@@ -167,4 +188,30 @@ func (mb *rtuUDPTransporter) close() (err error) {
 		mb.conn = nil
 	}
 	return
+}
+
+func (mb *rtuUDPTransporter) startCloseTimer() {
+	if mb.IdleTimeout <= 0 {
+		return
+	}
+	if mb.closeTimer == nil {
+		mb.closeTimer = time.AfterFunc(mb.IdleTimeout, mb.closeIdle)
+	} else {
+		mb.closeTimer.Reset(mb.IdleTimeout)
+	}
+}
+
+// closeIdle closes the connection if last activity is passed behind IdleTimeout.
+func (mb *rtuUDPTransporter) closeIdle() {
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
+
+	if mb.IdleTimeout <= 0 {
+		return
+	}
+
+	if idle := time.Since(mb.lastActivity); idle >= mb.IdleTimeout {
+		mb.logf("modbus: closing connection due to idle timeout: %v", idle)
+		mb.close()
+	}
 }
